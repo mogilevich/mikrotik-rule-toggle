@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -60,13 +61,16 @@ func main() {
 		log.Fatal(err)
 	}
 
+	audit := NewAuditLog(filepath.Join(dataDir, "audit.json"), 200)
 	hb := &Heartbeat{}
 
 	// Background ticker: re-enable params whose timer has expired
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		for range ticker.C {
-			store.RestoreExpired()
+			for _, name := range store.RestoreExpired() {
+				audit.Add(name, "expired", "таймер истёк")
+			}
 		}
 	}()
 
@@ -78,7 +82,7 @@ func main() {
 		case http.MethodGet:
 			handleGetState(w, r, store, hb)
 		case http.MethodPost:
-			handleSetState(w, r, store)
+			handleSetState(w, r, store, audit)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -98,18 +102,36 @@ func main() {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		handleTimer(w, r, store)
+		handleTimer(w, r, store, audit)
 	})
 
 	mux.HandleFunc("/api/params", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
-			handleAddParam(w, r, store)
+			handleAddParam(w, r, store, audit)
 		case http.MethodDelete:
-			handleDeleteParam(w, r, store)
+			handleDeleteParam(w, r, store, audit)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	mux.HandleFunc("/api/log", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(audit.Recent(50))
+	})
+
+	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(audit.Stats())
 	})
 
 	// Serve MikroTik script for download
@@ -159,7 +181,7 @@ type setStateReq struct {
 	Enabled bool   `json:"enabled"`
 }
 
-func handleSetState(w http.ResponseWriter, r *http.Request, store *Store) {
+func handleSetState(w http.ResponseWriter, r *http.Request, store *Store, audit *AuditLog) {
 	var req setStateReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -173,6 +195,11 @@ func handleSetState(w http.ResponseWriter, r *http.Request, store *Store) {
 		http.Error(w, "param not found", http.StatusNotFound)
 		return
 	}
+	if req.Enabled {
+		audit.Add(req.Name, "toggle", "включён")
+	} else {
+		audit.Add(req.Name, "toggle", "выключен")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(store.GetState())
 }
@@ -182,7 +209,7 @@ type timerReq struct {
 	Minutes int    `json:"minutes"`
 }
 
-func handleTimer(w http.ResponseWriter, r *http.Request, store *Store) {
+func handleTimer(w http.ResponseWriter, r *http.Request, store *Store, audit *AuditLog) {
 	var req timerReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -196,8 +223,20 @@ func handleTimer(w http.ResponseWriter, r *http.Request, store *Store) {
 		http.Error(w, "param not found", http.StatusNotFound)
 		return
 	}
+	audit.Add(req.Name, "timer", formatDuration(req.Minutes))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(store.GetState())
+}
+
+func formatDuration(minutes int) string {
+	switch {
+	case minutes < 60:
+		return fmt.Sprintf("на %d мин", minutes)
+	case minutes%60 == 0:
+		return fmt.Sprintf("на %d ч", minutes/60)
+	default:
+		return fmt.Sprintf("на %dч %dм", minutes/60, minutes%60)
+	}
 }
 
 type addParamReq struct {
@@ -206,7 +245,7 @@ type addParamReq struct {
 	Inverted    bool   `json:"inverted"`
 }
 
-func handleAddParam(w http.ResponseWriter, r *http.Request, store *Store) {
+func handleAddParam(w http.ResponseWriter, r *http.Request, store *Store, audit *AuditLog) {
 	var req addParamReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
@@ -217,11 +256,12 @@ func handleAddParam(w http.ResponseWriter, r *http.Request, store *Store) {
 		return
 	}
 	store.AddParam(req.Name, req.Description, req.Inverted)
+	audit.Add(req.Name, "add", "создан")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(store.GetState())
 }
 
-func handleDeleteParam(w http.ResponseWriter, r *http.Request, store *Store) {
+func handleDeleteParam(w http.ResponseWriter, r *http.Request, store *Store, audit *AuditLog) {
 	name := r.URL.Query().Get("name")
 	if name == "" {
 		http.Error(w, "name query param is required", http.StatusBadRequest)
@@ -231,6 +271,7 @@ func handleDeleteParam(w http.ResponseWriter, r *http.Request, store *Store) {
 		http.Error(w, "param not found", http.StatusNotFound)
 		return
 	}
+	audit.Add(name, "delete", "удалён")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(store.GetState())
 }

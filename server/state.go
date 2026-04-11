@@ -99,27 +99,31 @@ func (s *Store) TempRelease(name string, dur time.Duration) bool {
 }
 
 // RestoreExpired checks all params and restores those whose timer has expired.
-func (s *Store) RestoreExpired() {
+// Returns names of restored params for audit logging.
+func (s *Store) RestoreExpired() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().Unix()
 	changed := false
+	var restored []string
 	for k, p := range s.data.Params {
 		if p.DisabledUntil != nil && *p.DisabledUntil <= now {
 			if p.Inverted {
-				p.Enabled = false // kid-control: back to restricted
+				p.Enabled = false
 			} else {
-				p.Enabled = true // firewall: back to blocked
+				p.Enabled = true
 			}
 			p.DisabledUntil = nil
 			s.data.Params[k] = p
 			changed = true
+			restored = append(restored, k)
 			log.Printf("timer expired: restored %s", k)
 		}
 	}
 	if changed {
 		s.save()
 	}
+	return restored
 }
 
 func (s *Store) AddParam(name, description string, inverted bool) {

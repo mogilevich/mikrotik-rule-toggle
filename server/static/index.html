@@ -84,6 +84,19 @@
   #token-bar button { background: #ff9800; color: #fff; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
 
   .empty { text-align: center; color: #999; padding: 30px 0; }
+  .log-list { list-style: none; padding: 0; margin-top: 8px; }
+  .log-list li { padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: .8em; display: flex; gap: 8px; align-items: baseline; }
+  .log-list li:last-child { border-bottom: none; }
+  .log-time { color: #999; font-size: .9em; white-space: nowrap; flex-shrink: 0; }
+  .log-param { font-weight: 600; font-family: monospace; }
+  .log-action { color: #666; }
+  .stats-grid { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }
+  .stat-card { background: #f9f9f9; border-radius: 6px; padding: 10px; }
+  .stat-card .stat-name { font-weight: 600; font-family: monospace; font-size: .9em; margin-bottom: 6px; }
+  .stat-row { display: flex; justify-content: space-between; font-size: .8em; color: #666; padding: 2px 0; }
+  .stat-row .val { font-weight: 600; color: #333; }
+  .stat-timers { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .stat-timers span { background: #fff3e0; color: #e65100; font-size: .7em; padding: 2px 6px; border-radius: 3px; }
 </style>
 </head>
 <body>
@@ -105,10 +118,23 @@
     <span class="router-detail">ожидание...</span>
   </div>
 
+  <details class="add-form" id="log-section">
+    <summary style="cursor:pointer;font-weight:600;font-size:.95em">История</summary>
+    <ul class="log-list" id="log-list"></ul>
+  </details>
+
+  <details class="add-form" id="stats-section">
+    <summary style="cursor:pointer;font-weight:600;font-size:.95em">Статистика</summary>
+    <div class="stats-grid" id="stats-grid"></div>
+  </details>
+
   <details class="add-form">
     <summary style="cursor:pointer;font-weight:600;font-size:.95em">Добавить параметр</summary>
     <div style="margin-top:10px">
-      <input type="text" id="new-name" placeholder="Имя (например: block-social)" />
+      <div style="display:flex;align-items:center;gap:0;margin-bottom:6px">
+        <span style="background:#eee;padding:8px 8px;border:1px solid #ddd;border-right:none;border-radius:6px 0 0 6px;font-family:monospace;font-size:.9em;color:#666;white-space:nowrap">hook:</span>
+        <input type="text" id="new-name" placeholder="block-social" style="margin:0;border-radius:0 6px 6px 0;flex:1" />
+      </div>
       <input type="text" id="new-desc" placeholder="Описание" />
       <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:.85em;cursor:pointer">
         <input type="checkbox" id="new-inverted" /> Kid-control (инверт. логика)
@@ -177,19 +203,19 @@ function render(params) {
     if (hasTimer) {
       stateClass = "timed";
       badgeClass = "timer";
-      badgeText = inv ? "врем. снято" : "врем. разрешено";
+      badgeText = inv ? "врем. выключен" : "врем. разрешено";
     } else if (p.enabled) {
       stateClass = inv ? "inactive" : "active";
       badgeClass = inv ? "allowed" : "blocked";
-      badgeText = inv ? "без огранич." : "заблокир.";
+      badgeText = inv ? "выключен" : "заблокир.";
     } else {
       stateClass = inv ? "active" : "inactive";
       badgeClass = inv ? "blocked" : "allowed";
-      badgeText = inv ? "ограничен" : "разрешено";
+      badgeText = inv ? "включён" : "разрешено";
     }
 
     const toggleTitle = inv
-      ? (p.enabled ? "Включить ограничения" : "Снять ограничения")
+      ? (p.enabled ? "Включить" : "Выключить")
       : (p.enabled ? "Разрешить трафик" : "Заблокировать трафик");
 
     const showTimerButtons = inv ? !p.enabled : p.enabled;
@@ -315,6 +341,55 @@ async function loadHeartbeat() {
     el.innerHTML = `<div class="router-dot ${dotClass}"></div><span class="router-label">Роутер:</span> <span class="router-detail">${statusText}</span>`;
   } catch(e) {}
 }
+
+async function loadLog() {
+  try {
+    const res = await fetch("/api/log", {headers: headers()});
+    if (!res.ok) return;
+    const entries = await res.json();
+    const el = document.getElementById("log-list");
+    if (!entries || !entries.length) { el.innerHTML = '<li style="color:#999">Пока пусто</li>'; return; }
+    el.innerHTML = entries.map(e => {
+      const d = new Date(e.time * 1000);
+      const t = String(d.getDate()).padStart(2,"0") + "." + String(d.getMonth()+1).padStart(2,"0") + " " + String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0");
+      return `<li><span class="log-time">${t}</span> <span class="log-param">${esc(e.param)}</span> <span class="log-action">${esc(e.detail)}</span></li>`;
+    }).join("");
+  } catch(e) {}
+}
+
+async function loadStats() {
+  try {
+    const res = await fetch("/api/stats", {headers: headers()});
+    if (!res.ok) return;
+    const data = await res.json();
+    const el = document.getElementById("stats-grid");
+    const params = Object.keys(data.by_param || {}).sort();
+    if (!params.length) { el.innerHTML = '<div style="color:#999;font-size:.85em">Нет данных</div>'; return; }
+    el.innerHTML = params.map(k => {
+      const s = data.by_param[k];
+      const lastUsed = s.last_used ? new Date(s.last_used * 1000) : null;
+      const lastStr = lastUsed ? (String(lastUsed.getDate()).padStart(2,"0") + "." + String(lastUsed.getMonth()+1).padStart(2,"0") + " " + String(lastUsed.getHours()).padStart(2,"0") + ":" + String(lastUsed.getMinutes()).padStart(2,"0")) : "—";
+      const timers = Object.entries(s.top_timer || {}).sort((a,b) => b[1] - a[1]);
+      const timerHtml = timers.length ? '<div class="stat-timers">' + timers.map(([d,c]) => `<span>${esc(d)} (${c}x)</span>`).join("") + '</div>' : '';
+      return `<div class="stat-card">
+        <div class="stat-name">${esc(k)}</div>
+        <div class="stat-row"><span>Переключений</span><span class="val">${s.toggles}</span></div>
+        <div class="stat-row"><span>Таймеров</span><span class="val">${s.timers}</span></div>
+        <div class="stat-row"><span>Истекло</span><span class="val">${s.expired}</span></div>
+        <div class="stat-row"><span>Последнее</span><span class="val">${lastStr}</span></div>
+        ${timerHtml}
+      </div>`;
+    }).join("");
+  } catch(e) {}
+}
+
+// Load log/stats when details is opened
+document.getElementById("log-section").addEventListener("toggle", function() {
+  if (this.open) loadLog();
+});
+document.getElementById("stats-section").addEventListener("toggle", function() {
+  if (this.open) loadStats();
+});
 
 setInterval(updateCountdowns, 1000);
 setInterval(loadState, 30000);

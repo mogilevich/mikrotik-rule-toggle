@@ -23,13 +23,23 @@
 
 :do {
     :if ($token != "") do={
-        :set content ([/tool/fetch url=$url http-header-field="Authorization: Bearer $token" output=user as-value]->"data")
+        :set content ([/tool/fetch url=$url http-header-field="Authorization: Bearer $token" output=user as-value duration=10]->"data")
     } else={
-        :set content ([/tool/fetch url=$url output=user as-value]->"data")
+        :set content ([/tool/fetch url=$url output=user as-value duration=10]->"data")
     }
 } on-error={
     :log warning "remote-hook: failed to fetch state from $url"
     :error "fetch failed"
+}
+
+# Validate response contains expected JSON
+:if ([:len $content] = 0) do={
+    :log warning "remote-hook: empty response from server"
+    :error "empty response"
+}
+:if ([:typeof [:find $content "\"params\""]] != "num") do={
+    :log warning "remote-hook: invalid response (no params key)"
+    :error "invalid response"
 }
 
 # --- Helper: look up param enabled state in JSON ---
@@ -63,6 +73,36 @@
                 :log info "remote-hook: enabled $paramName in $section"
             } on-error={
                 :log warning "remote-hook: failed to enable $paramName in $section"
+            }
+            # Clear connection tracking for firewall rules with address lists
+            :if ([:find $section "firewall"] != nothing) do={
+                :local srcList ""
+                :local dstList ""
+                :do { :set srcList [[:parse ":return [$section get $ruleId src-address-list]"]] } on-error={}
+                :do { :set dstList [[:parse ":return [$section get $ruleId dst-address-list]"]] } on-error={}
+                :local totalCleared 0
+
+                # Clear by src-address-list (e.g. devices of a child)
+                :if ([:typeof $srcList] = "str" && [:len $srcList] > 0) do={
+                    :local connIds [/ip/firewall/connection find src-address-list=$srcList]
+                    :if ([:len $connIds] > 0) do={
+                        /ip/firewall/connection remove $connIds
+                        :set totalCleared ($totalCleared + [:len $connIds])
+                    }
+                }
+
+                # Clear by dst-address-list (e.g. blocked service IPs)
+                :if ([:typeof $dstList] = "str" && [:len $dstList] > 0) do={
+                    :local connIds [/ip/firewall/connection find dst-address-list=$dstList]
+                    :if ([:len $connIds] > 0) do={
+                        /ip/firewall/connection remove $connIds
+                        :set totalCleared ($totalCleared + [:len $connIds])
+                    }
+                }
+
+                :if ($totalCleared > 0) do={
+                    :log info "remote-hook: cleared $totalCleared connections for $paramName"
+                }
             }
         }
     } else={
