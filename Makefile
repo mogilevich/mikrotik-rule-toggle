@@ -1,4 +1,4 @@
-HOST_IP ?= $(shell (ip -4 route get 1.1.1.1 2>/dev/null | awk '/src/{print $$NF; exit}') || true)
+HOST_IP ?= $(shell ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($$i=="src") {print $$(i+1); exit}}')
 ifeq ($(HOST_IP),)
 HOST_IP := $(shell ipconfig getifaddr en0 2>/dev/null)
 endif
