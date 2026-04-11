@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -8,9 +9,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -146,8 +149,21 @@ func main() {
 
 	handler := withAuth(authToken, mux)
 
+	srv := &http.Server{Addr: listenAddr, Handler: handler}
+
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		log.Println("shutting down...")
+		audit.Flush()
+		srv.Shutdown(context.Background())
+	}()
+
 	log.Printf("listening on %s", listenAddr)
-	log.Fatal(http.ListenAndServe(listenAddr, handler))
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
 }
 
 func withAuth(token string, next http.Handler) http.Handler {

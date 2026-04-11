@@ -44,12 +44,15 @@ func (s *Store) load() error {
 	return json.Unmarshal(raw, &s.data)
 }
 
-func (s *Store) save() error {
+func (s *Store) save() {
 	raw, err := json.MarshalIndent(s.data, "", "  ")
 	if err != nil {
-		return err
+		log.Printf("ERROR: failed to marshal state: %v", err)
+		return
 	}
-	return os.WriteFile(s.path, raw, 0644)
+	if err := os.WriteFile(s.path, raw, 0644); err != nil {
+		log.Printf("ERROR: failed to write %s: %v", s.path, err)
+	}
 }
 
 func (s *Store) GetState() State {

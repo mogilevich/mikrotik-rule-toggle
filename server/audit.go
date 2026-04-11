@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -15,18 +16,54 @@ type AuditEntry struct {
 }
 
 type AuditLog struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	path    string
 	entries []AuditEntry
 	maxSize int
+	dirty   bool
+	done    chan struct{}
 }
 
 func NewAuditLog(path string, maxSize int) *AuditLog {
-	a := &AuditLog{path: path, maxSize: maxSize}
+	a := &AuditLog{
+		path:    path,
+		maxSize: maxSize,
+		done:    make(chan struct{}),
+	}
 	if raw, err := os.ReadFile(path); err == nil {
 		json.Unmarshal(raw, &a.entries)
 	}
+	go a.flushLoop()
 	return a
+}
+
+func (a *AuditLog) flushLoop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			a.mu.Lock()
+			if a.dirty {
+				a.save()
+				a.dirty = false
+			}
+			a.mu.Unlock()
+		case <-a.done:
+			return
+		}
+	}
+}
+
+// Flush writes pending entries to disk and stops the background loop.
+func (a *AuditLog) Flush() {
+	close(a.done)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.dirty {
+		a.save()
+		a.dirty = false
+	}
 }
 
 func (a *AuditLog) Add(param, action, detail string) {
@@ -38,20 +75,18 @@ func (a *AuditLog) Add(param, action, detail string) {
 		Action: action,
 		Detail: detail,
 	})
-	// Keep only last maxSize entries
 	if len(a.entries) > a.maxSize {
 		a.entries = a.entries[len(a.entries)-a.maxSize:]
 	}
-	a.save()
+	a.dirty = true
 }
 
 func (a *AuditLog) Recent(n int) []AuditEntry {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	if n > len(a.entries) {
 		n = len(a.entries)
 	}
-	// Return last n entries in reverse order (newest first)
 	result := make([]AuditEntry, n)
 	for i := 0; i < n; i++ {
 		result[i] = a.entries[len(a.entries)-1-i]
@@ -60,21 +95,21 @@ func (a *AuditLog) Recent(n int) []AuditEntry {
 }
 
 type ParamStats struct {
-	Toggles  int            `json:"toggles"`  // total toggle count
-	Timers   int            `json:"timers"`   // total timer count
-	Expired  int            `json:"expired"`  // how many timers expired (not cancelled)
-	LastUsed *int64         `json:"last_used"` // last action timestamp
-	TopTimer map[string]int `json:"top_timer"` // timer duration → count
+	Toggles  int            `json:"toggles"`
+	Timers   int            `json:"timers"`
+	Expired  int            `json:"expired"`
+	LastUsed *int64         `json:"last_used"`
+	TopTimer map[string]int `json:"top_timer"`
 }
 
 type Stats struct {
-	Total    int                   `json:"total"`    // total events
-	ByParam  map[string]ParamStats `json:"by_param"`
+	Total   int                   `json:"total"`
+	ByParam map[string]ParamStats `json:"by_param"`
 }
 
 func (a *AuditLog) Stats() Stats {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 
 	s := Stats{
 		Total:   len(a.entries),
@@ -105,10 +140,14 @@ func (a *AuditLog) Stats() Stats {
 	return s
 }
 
+// save writes to disk. Must be called with mu held.
 func (a *AuditLog) save() {
 	raw, err := json.MarshalIndent(a.entries, "", "  ")
 	if err != nil {
+		log.Printf("ERROR: failed to marshal audit log: %v", err)
 		return
 	}
-	os.WriteFile(a.path, raw, 0644)
+	if err := os.WriteFile(a.path, raw, 0644); err != nil {
+		log.Printf("ERROR: failed to write %s: %v", a.path, err)
+	}
 }

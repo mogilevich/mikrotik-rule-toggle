@@ -15,7 +15,7 @@
 #                   removes schedule restrictions, giving the child full access.
 
 # --- Configuration (edit these) ---
-:local url "http://10.38.10.11:8080/api/state"
+:local url "http://your-server:8080/api/state"
 :local token ""
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -68,21 +68,22 @@
             :set currentDisabled [[:parse ":return [$section get $ruleId disabled]"]]
         } on-error={}
         :if ($currentDisabled = true) do={
+            :local enableOk false
             :do {
                 [[:parse "$section set $ruleId disabled=no"]]
+                :set enableOk true
                 :log info "remote-hook: enabled $paramName in $section"
             } on-error={
                 :log warning "remote-hook: failed to enable $paramName in $section"
             }
-            # Clear connection tracking for firewall rules with address lists
-            :if ([:find $section "firewall"] != nothing) do={
+            # Clear connection tracking only if rule was successfully enabled
+            :if ($enableOk && [:find $section "firewall"] != nothing) do={
                 :local srcList ""
                 :local dstList ""
                 :do { :set srcList [[:parse ":return [$section get $ruleId src-address-list]"]] } on-error={}
                 :do { :set dstList [[:parse ":return [$section get $ruleId dst-address-list]"]] } on-error={}
                 :local totalCleared 0
 
-                # Clear by src-address-list (e.g. devices of a child)
                 :if ([:typeof $srcList] = "str" && [:len $srcList] > 0) do={
                     :local connIds [/ip/firewall/connection find src-address-list=$srcList]
                     :if ([:len $connIds] > 0) do={
@@ -91,7 +92,6 @@
                     }
                 }
 
-                # Clear by dst-address-list (e.g. blocked service IPs)
                 :if ([:typeof $dstList] = "str" && [:len $dstList] > 0) do={
                     :local connIds [/ip/firewall/connection find dst-address-list=$dstList]
                     :if ([:len $connIds] > 0) do={
