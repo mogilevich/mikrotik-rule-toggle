@@ -28,18 +28,34 @@
 ## Запуск сервера
 
 ```bash
-# Docker Compose
-AUTH_TOKEN=your-secret-token docker compose up --build -d
+# Самый простой способ (автоопределение IP хоста)
+make up
 
-# Пересборка после изменений
-docker compose up --build
+# Или с явным указанием IP и токена
+HOST_IP=10.0.0.5 AUTH_TOKEN=secret docker compose up --build -d
 
-# Или напрямую (без Docker)
+# Или через .env файл
+echo "HOST_IP=10.0.0.5" > .env
+echo "AUTH_TOKEN=secret" >> .env
+docker compose up --build -d
+
+# Без Docker
 go build -o hook-server ./server/
-AUTH_TOKEN=your-secret-token ./hook-server
+AUTH_TOKEN=secret ./hook-server
 ```
 
-Веб-панель доступна на `http://localhost:8080`.
+`HOST_IP` автоматически подставляется в скрипт `remote-hook.rsc` при старте контейнера — MikroTik скачает скрипт с уже правильным адресом сервера.
+
+Веб-панель доступна на `http://<HOST_IP>:8080`.
+
+### Make-команды
+
+| Команда | Описание |
+|---------|----------|
+| `make up` | Сборка и запуск (IP определяется автоматически) |
+| `make down` | Остановка |
+| `make logs` | Просмотр логов |
+| `make restart` | Пересборка и перезапуск |
 
 ### Переменные окружения
 

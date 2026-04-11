@@ -7,6 +7,7 @@ services:
       - LISTEN_ADDR=:8080
       - DATA_DIR=/data
       - AUTH_TOKEN=${AUTH_TOKEN:-}
+      - HOST_IP=${HOST_IP:-}
     volumes:
       - hook-data:/data
     restart: unless-stopped

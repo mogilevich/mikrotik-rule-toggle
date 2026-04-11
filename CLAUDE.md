@@ -15,8 +15,11 @@ go build -o hook-server ./server/
 # Run locally
 AUTH_TOKEN=test ./hook-server
 
-# Docker (always use --build after code changes)
-docker compose up --build
+# Docker via Make (auto-detects host IP for .rsc script)
+make up
+
+# Docker manually
+HOST_IP=10.0.0.5 docker compose up --build
 
 # Test API
 curl -H "Authorization: Bearer test" http://localhost:8080/api/state
@@ -29,7 +32,12 @@ curl -H "Authorization: Bearer test" http://localhost:8080/api/state
 - `server/audit.go` — `AuditLog` with buffered writes (5s flush), RWMutex, graceful Flush()
 - `server/static/index.html` — single-page vanilla JS PWA, pull-to-refresh, countdown timers
 - `server/static/manifest.json` + `sw.js` — PWA support
+- `server/static/icon.svg` — MikroTik logo (Simple Icons), used as favicon
+- `server/static/icon-192.svg` — MikroTik logo on blue background, used as PWA/apple-touch-icon
 - `mikrotik/remote-hook.rsc` — RouterOS 7 script, in-memory fetch, conntrack clearing
+
+- `entrypoint.sh` — replaces `your-server` placeholder in .rsc with `HOST_IP` env at container startup
+- `Makefile` — `make up/down/logs/restart`, auto-detects host IP via `ip route` (Linux) or `ipconfig` (macOS)
 
 Single `main` package, no internal packages. Static files embedded via `//go:embed`. MikroTik scripts served from disk (`/mikrotik/` in container, copied via Dockerfile).
 

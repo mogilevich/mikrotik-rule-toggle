@@ -8,5 +8,6 @@ FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /app-bin /hook-server
 COPY mikrotik/ /mikrotik/
+COPY entrypoint.sh /entrypoint.sh
 EXPOSE 8080
-ENTRYPOINT ["/hook-server"]
+ENTRYPOINT ["/entrypoint.sh"]
