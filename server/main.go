@@ -9,11 +9,42 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
 //go:embed static
 var staticFiles embed.FS
+
+// Heartbeat tracks when MikroTik last fetched state
+type Heartbeat struct {
+	mu       sync.RWMutex
+	lastSeen time.Time
+}
+
+func (h *Heartbeat) Touch() {
+	h.mu.Lock()
+	h.lastSeen = time.Now()
+	h.mu.Unlock()
+}
+
+type heartbeatResponse struct {
+	LastSeen *int64 `json:"last_seen"` // unix timestamp, nil = never
+	AgeSec   int    `json:"age_sec"`   // seconds since last seen
+}
+
+func (h *Heartbeat) Info() heartbeatResponse {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.lastSeen.IsZero() {
+		return heartbeatResponse{}
+	}
+	ts := h.lastSeen.Unix()
+	return heartbeatResponse{
+		LastSeen: &ts,
+		AgeSec:   int(time.Since(h.lastSeen).Seconds()),
+	}
+}
 
 func main() {
 	listenAddr := envOrDefault("LISTEN_ADDR", ":8080")
@@ -29,6 +60,8 @@ func main() {
 		log.Fatal(err)
 	}
 
+	hb := &Heartbeat{}
+
 	// Background ticker: re-enable params whose timer has expired
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
@@ -43,12 +76,21 @@ func main() {
 	mux.HandleFunc("/api/state", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			handleGetState(w, r, store)
+			handleGetState(w, r, store, hb)
 		case http.MethodPost:
 			handleSetState(w, r, store)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	mux.HandleFunc("/api/heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(hb.Info())
 	})
 
 	mux.HandleFunc("/api/timer", func(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +144,12 @@ func withAuth(token string, next http.Handler) http.Handler {
 	})
 }
 
-func handleGetState(w http.ResponseWriter, r *http.Request, store *Store) {
+func handleGetState(w http.ResponseWriter, r *http.Request, store *Store, hb *Heartbeat) {
+	// Detect MikroTik fetch by User-Agent
+	ua := r.Header.Get("User-Agent")
+	if strings.Contains(strings.ToLower(ua), "mikrotik") || strings.Contains(strings.ToLower(ua), "routeros") {
+		hb.Touch()
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(store.GetState())
 }
