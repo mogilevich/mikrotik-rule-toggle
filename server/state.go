@@ -2,13 +2,17 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"sync"
+	"time"
 )
 
 type Param struct {
-	Enabled     bool   `json:"enabled"`
-	Description string `json:"description"`
+	Enabled       bool   `json:"enabled"`
+	Description   string `json:"description"`
+	Inverted      bool   `json:"inverted"`                 // true = kid-control style (enabled in web → disabled on MikroTik)
+	DisabledUntil *int64 `json:"disabled_until,omitempty"` // unix timestamp, nil = no timer
 }
 
 type State struct {
@@ -66,15 +70,62 @@ func (s *Store) SetParam(name string, enabled bool) bool {
 		return false
 	}
 	p.Enabled = enabled
+	p.DisabledUntil = nil // clear timer on manual toggle
 	s.data.Params[name] = p
 	s.save()
 	return true
 }
 
-func (s *Store) AddParam(name, description string) {
+// TempRelease temporarily releases restrictions for a param.
+// Normal params:   sets enabled=false (unblock), reverts to enabled=true on expiry.
+// Inverted params: sets enabled=true (unrestrict), reverts to enabled=false on expiry.
+func (s *Store) TempRelease(name string, dur time.Duration) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data.Params[name] = Param{Enabled: false, Description: description}
+	p, ok := s.data.Params[name]
+	if !ok {
+		return false
+	}
+	until := time.Now().Add(dur).Unix()
+	if p.Inverted {
+		p.Enabled = true // kid-control: enabled=true → restrictions off
+	} else {
+		p.Enabled = false // firewall: enabled=false → rule disabled
+	}
+	p.DisabledUntil = &until
+	s.data.Params[name] = p
+	s.save()
+	return true
+}
+
+// RestoreExpired checks all params and restores those whose timer has expired.
+func (s *Store) RestoreExpired() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().Unix()
+	changed := false
+	for k, p := range s.data.Params {
+		if p.DisabledUntil != nil && *p.DisabledUntil <= now {
+			if p.Inverted {
+				p.Enabled = false // kid-control: back to restricted
+			} else {
+				p.Enabled = true // firewall: back to blocked
+			}
+			p.DisabledUntil = nil
+			s.data.Params[k] = p
+			changed = true
+			log.Printf("timer expired: restored %s", k)
+		}
+	}
+	if changed {
+		s.save()
+	}
+}
+
+func (s *Store) AddParam(name, description string, inverted bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data.Params[name] = Param{Enabled: false, Description: description, Inverted: inverted}
 	s.save()
 }
 

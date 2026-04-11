@@ -37,7 +37,7 @@ AUTH_TOKEN=your-secret-token ./hook-server
 
 ### 1. Пометьте правила комментариями
 
-Добавьте `hook:<имя-параметра>` в комментарий правила (имя параметра должно совпадать с тем, что создано в веб-панели):
+У каждого правила в RouterOS есть поле `comment`. Впишите туда `hook:<имя>`, где `<имя>` — это имя параметра из веб-панели. Скрипт найдёт все правила с таким комментарием и будет включать/выключать их:
 
 ```
 /ip/firewall/filter add chain=forward action=drop comment="hook:block-social" disabled=yes
@@ -52,12 +52,8 @@ AUTH_TOKEN=your-secret-token ./hook-server
 # Скачайте скрипт с сервера на роутер
 /tool/fetch url="http://your-server:8080/mikrotik/remote-hook.rsc" dst-path=remote-hook.rsc
 
-# Создайте скрипт из скачанного файла
+# Отредактируйте url и token в начале скрипта, затем создайте скрипт
 /system/script add name=remote-hook source=[/file/get remote-hook.rsc contents]
-
-# Настройте переменные подключения
-/system/script/environment add name=hookUrl value="http://your-server:8080/api/state"
-/system/script/environment add name=hookToken value="your-secret-token"
 
 # Создайте расписание (каждую минуту)
 /system/scheduler add name=remote-hook interval=1m on-event="/system/script/run remote-hook"

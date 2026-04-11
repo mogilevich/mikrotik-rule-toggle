@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 //go:embed static
@@ -28,6 +29,14 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Background ticker: re-enable params whose timer has expired
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		for range ticker.C {
+			store.RestoreExpired()
+		}
+	}()
+
 	mux := http.NewServeMux()
 
 	// API routes
@@ -40,6 +49,14 @@ func main() {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	mux.HandleFunc("/api/timer", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		handleTimer(w, r, store)
 	})
 
 	mux.HandleFunc("/api/params", func(w http.ResponseWriter, r *http.Request) {
@@ -113,9 +130,33 @@ func handleSetState(w http.ResponseWriter, r *http.Request, store *Store) {
 	json.NewEncoder(w).Encode(store.GetState())
 }
 
+type timerReq struct {
+	Name    string `json:"name"`
+	Minutes int    `json:"minutes"`
+}
+
+func handleTimer(w http.ResponseWriter, r *http.Request, store *Store) {
+	var req timerReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" || req.Minutes <= 0 {
+		http.Error(w, "name and minutes (>0) are required", http.StatusBadRequest)
+		return
+	}
+	if !store.TempRelease(req.Name, time.Duration(req.Minutes)*time.Minute) {
+		http.Error(w, "param not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(store.GetState())
+}
+
 type addParamReq struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Inverted    bool   `json:"inverted"`
 }
 
 func handleAddParam(w http.ResponseWriter, r *http.Request, store *Store) {
@@ -128,7 +169,7 @@ func handleAddParam(w http.ResponseWriter, r *http.Request, store *Store) {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	store.AddParam(req.Name, req.Description)
+	store.AddParam(req.Name, req.Description, req.Inverted)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(store.GetState())
 }

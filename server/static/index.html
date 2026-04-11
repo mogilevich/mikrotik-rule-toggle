@@ -9,18 +9,32 @@
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 20px; }
   .container { max-width: 600px; margin: 0 auto; }
   h1 { margin-bottom: 20px; font-size: 1.5em; }
-  .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); padding: 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+  .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); padding: 16px; margin-bottom: 12px; border-left: 4px solid transparent; transition: all .2s; }
+  .card.active { border-left-color: #e53935; background: #fff5f5; }
+  .card.inactive { border-left-color: #4caf50; background: #f5fff5; }
+  .card.timed { border-left-color: #ff9800; background: #fff8e1; }
+  .card-top { display: flex; align-items: center; gap: 12px; }
   .card .info { flex: 1; }
   .card .name { font-weight: 600; font-size: 1em; font-family: monospace; }
   .card .desc { color: #666; font-size: .85em; margin-top: 2px; }
-  .toggle { position: relative; width: 50px; height: 28px; flex-shrink: 0; margin-left: 12px; }
+  .status-badge { font-size: .75em; font-weight: 600; padding: 3px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; }
+  .status-badge.blocked { background: #ffebee; color: #c62828; }
+  .status-badge.allowed { background: #e8f5e9; color: #2e7d32; }
+  .status-badge.timer { background: #fff3e0; color: #e65100; }
+  .toggle { position: relative; width: 50px; height: 28px; flex-shrink: 0; }
   .toggle input { opacity: 0; width: 0; height: 0; }
-  .toggle .slider { position: absolute; inset: 0; background: #ccc; border-radius: 28px; cursor: pointer; transition: .2s; }
+  .toggle .slider { position: absolute; inset: 0; background: #4caf50; border-radius: 28px; cursor: pointer; transition: .2s; }
   .toggle .slider::before { content: ""; position: absolute; width: 22px; height: 22px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .2s; }
-  .toggle input:checked + .slider { background: #4caf50; }
+  .toggle input:checked + .slider { background: #e53935; }
   .toggle input:checked + .slider::before { transform: translateX(22px); }
-  .delete-btn { background: none; border: none; color: #e53935; cursor: pointer; font-size: 1.2em; margin-left: 12px; padding: 4px 8px; }
-  .delete-btn:hover { background: #fbe9e7; border-radius: 4px; }
+  .delete-btn { background: none; border: none; color: #999; cursor: pointer; font-size: 1.2em; padding: 4px 8px; }
+  .delete-btn:hover { color: #e53935; background: #fbe9e7; border-radius: 4px; }
+  .timer-row { display: flex; align-items: center; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; }
+  .timer-row button { background: #ff9800; color: #fff; border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: .8em; white-space: nowrap; }
+  .timer-row button:hover { background: #f57c00; }
+  .timer-row button.cancel { background: #999; }
+  .timer-row button.cancel:hover { background: #777; }
+  .countdown { font-size: .85em; color: #e65100; font-weight: 600; font-variant-numeric: tabular-nums; }
   .add-form { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); padding: 16px; margin-top: 20px; }
   .add-form h2 { font-size: 1.1em; margin-bottom: 12px; }
   .add-form input { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 8px; font-size: .95em; }
@@ -30,6 +44,12 @@
   #token-bar { background: #fff3e0; padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
   #token-bar input { flex: 1; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; }
   #token-bar button { background: #ff9800; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
+  .legend { display: flex; gap: 16px; margin-bottom: 16px; font-size: .85em; color: #666; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 3px; }
+  .legend-dot.red { background: #e53935; }
+  .legend-dot.green { background: #4caf50; }
+  .legend-dot.orange { background: #ff9800; }
 </style>
 </head>
 <body>
@@ -42,18 +62,28 @@
     <button onclick="saveToken()">OK</button>
   </div>
 
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot red"></div> Заблокировано</div>
+    <div class="legend-item"><div class="legend-dot green"></div> Разрешено</div>
+    <div class="legend-item"><div class="legend-dot orange"></div> Разрешено временно</div>
+  </div>
+
   <div id="params"></div>
 
   <div class="add-form">
     <h2>Добавить параметр</h2>
     <input type="text" id="new-name" placeholder="Имя (например: block-social)" />
     <input type="text" id="new-desc" placeholder="Описание" />
+    <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:.9em;cursor:pointer">
+      <input type="checkbox" id="new-inverted" /> Kid-control (инвертированная логика)
+    </label>
     <button onclick="addParam()">Добавить</button>
   </div>
 </div>
 
 <script>
 let authToken = localStorage.getItem("hook-token") || "";
+let currentParams = {};
 document.getElementById("token").value = authToken;
 
 function saveToken() {
@@ -73,10 +103,18 @@ async function loadState() {
     const res = await fetch("/api/state", {headers: headers()});
     if (!res.ok) { document.getElementById("params").innerHTML = '<div class="empty">Ошибка: ' + res.status + '</div>'; return; }
     const data = await res.json();
-    render(data.params || {});
+    currentParams = data.params || {};
+    render(currentParams);
   } catch (e) {
     document.getElementById("params").innerHTML = '<div class="empty">Не удалось подключиться</div>';
   }
+}
+
+function formatCountdown(seconds) {
+  if (seconds <= 0) return "0:00";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m + ":" + String(s).padStart(2, "0");
 }
 
 function render(params) {
@@ -85,38 +123,131 @@ function render(params) {
   if (!keys.length) { el.innerHTML = '<div class="empty">Нет параметров</div>'; return; }
   el.innerHTML = keys.map(k => {
     const p = params[k];
-    return `<div class="card">
-      <div class="info"><div class="name">hook:${k}</div><div class="desc">${esc(p.description)}</div></div>
-      <label class="toggle"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggle('${esc(k)}', this.checked)"><span class="slider"></span></label>
-      <button class="delete-btn" onclick="deleteParam('${esc(k)}')" title="Удалить">&times;</button>
+    const inv = p.inverted;
+    const hasTimer = p.disabled_until && !p.enabled;
+
+    // For inverted (kid-control): enabled=true means child is FREE (restrictions off)
+    // For normal (firewall):      enabled=true means traffic is BLOCKED
+    let stateClass, badgeClass, badgeText;
+    if (hasTimer) {
+      stateClass = "timed";
+      badgeClass = "timer";
+      badgeText = inv ? "временно ограничен" : "временно разрешено";
+    } else if (p.enabled) {
+      stateClass = inv ? "inactive" : "active";
+      badgeClass = inv ? "allowed" : "blocked";
+      badgeText = inv ? "без ограничений" : "заблокировано";
+    } else {
+      stateClass = inv ? "active" : "inactive";
+      badgeClass = inv ? "blocked" : "allowed";
+      badgeText = inv ? "ограничен" : "разрешено";
+    }
+
+    const toggleTitle = inv
+      ? (p.enabled ? "Включить ограничения" : "Снять ограничения")
+      : (p.enabled ? "Разрешить трафик" : "Заблокировать трафик");
+
+    // Timer buttons: shown when rule is in "restricting" state
+    // For normal: enabled=true (blocked) → offer temp unlock
+    // For inverted: enabled=false (restricted) → offer temp unlock
+    const showTimerButtons = inv ? !p.enabled : p.enabled;
+
+    let timerRow = "";
+    if (hasTimer) {
+      timerRow = `<div class="timer-row">
+        <span class="countdown" data-until="${p.disabled_until}"></span>
+        <button class="cancel" onclick="cancelTimer('${esc(k)}')">${inv ? "Вернуть ограничения" : "Вернуть блокировку"}</button>
+      </div>`;
+    } else if (showTimerButtons) {
+      const btnLabel = inv ? "Снять на" : "Разрешить на";
+      timerRow = `<div class="timer-row">
+        <button onclick="setTimer('${esc(k)}', 5)">5 мин</button>
+        <button onclick="setTimer('${esc(k)}', 15)">15 мин</button>
+        <button onclick="setTimer('${esc(k)}', 30)">30 мин</button>
+        <button onclick="setTimer('${esc(k)}', 60)">1 час</button>
+        <button onclick="setTimer('${esc(k)}', 180)">3 часа</button>
+        <button onclick="setTimer('${esc(k)}', 360)">6 часов</button>
+        <button onclick="setTimer('${esc(k)}', 1440)">24 часа</button>
+      </div>`;
+    }
+
+    const typeLabel = inv ? '<span style="font-size:.7em;color:#9e9e9e;margin-left:6px">kid-control</span>' : '';
+
+    return `<div class="card ${stateClass}">
+      <div class="card-top">
+        <div class="info">
+          <div class="name">hook:${esc(k)}${typeLabel}</div>
+          <div class="desc">${esc(p.description)}</div>
+        </div>
+        <span class="status-badge ${badgeClass}">${badgeText}</span>
+        <label class="toggle" title="${toggleTitle}"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggle('${esc(k)}', this.checked)"><span class="slider"></span></label>
+        <button class="delete-btn" onclick="deleteParam('${esc(k)}')" title="Удалить">&times;</button>
+      </div>
+      ${timerRow}
     </div>`;
   }).join("");
+  updateCountdowns();
 }
 
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
 async function toggle(name, enabled) {
   const res = await fetch("/api/state", {method: "POST", headers: headers(), body: JSON.stringify({name, enabled})});
-  if (res.ok) { const data = await res.json(); render(data.params || {}); }
+  if (res.ok) { const data = await res.json(); currentParams = data.params || {}; render(currentParams); }
+}
+
+async function setTimer(name, minutes) {
+  const res = await fetch("/api/timer", {method: "POST", headers: headers(), body: JSON.stringify({name, minutes})});
+  if (res.ok) { const data = await res.json(); currentParams = data.params || {}; render(currentParams); }
+}
+
+async function cancelTimer(name) {
+  // Restore the restricting state (clears the timer)
+  const p = currentParams[name];
+  const restoreEnabled = p && p.inverted ? false : true;
+  const res = await fetch("/api/state", {method: "POST", headers: headers(), body: JSON.stringify({name, enabled: restoreEnabled})});
+  if (res.ok) { const data = await res.json(); currentParams = data.params || {}; render(currentParams); }
 }
 
 async function addParam() {
   const name = document.getElementById("new-name").value.trim();
   const description = document.getElementById("new-desc").value.trim();
+  const inverted = document.getElementById("new-inverted").checked;
   if (!name) return;
-  const res = await fetch("/api/params", {method: "POST", headers: headers(), body: JSON.stringify({name, description})});
+  const res = await fetch("/api/params", {method: "POST", headers: headers(), body: JSON.stringify({name, description, inverted})});
   if (res.ok) {
-    const data = await res.json(); render(data.params || {});
+    const data = await res.json(); currentParams = data.params || {}; render(currentParams);
     document.getElementById("new-name").value = "";
     document.getElementById("new-desc").value = "";
+    document.getElementById("new-inverted").checked = false;
   }
 }
 
 async function deleteParam(name) {
   if (!confirm("Удалить параметр " + name + "?")) return;
   const res = await fetch("/api/params?name=" + encodeURIComponent(name), {method: "DELETE", headers: headers()});
-  if (res.ok) { const data = await res.json(); render(data.params || {}); }
+  if (res.ok) { const data = await res.json(); currentParams = data.params || {}; render(currentParams); }
 }
+
+function updateCountdowns() {
+  const els = document.querySelectorAll(".countdown[data-until]");
+  const now = Math.floor(Date.now() / 1000);
+  els.forEach(el => {
+    const until = parseInt(el.dataset.until);
+    const remaining = until - now;
+    if (remaining <= 0) {
+      loadState(); // timer expired, refresh
+    } else {
+      el.textContent = "Осталось " + formatCountdown(remaining);
+    }
+  });
+}
+
+// Update countdowns every second
+setInterval(updateCountdowns, 1000);
+
+// Refresh state periodically to stay in sync
+setInterval(loadState, 30000);
 
 loadState();
 </script>
