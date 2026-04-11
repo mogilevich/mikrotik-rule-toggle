@@ -1,13 +1,29 @@
-# MikroTik Remote Hook
+# MikroTik Rule Toggle
 
-Удалённое управление правилами MikroTik через веб-панель.
+Удалённое управление правилами MikroTik через веб-панель. Включайте и выключайте firewall-правила и kid-control с телефона.
 
 ## Как это работает
 
-1. **Веб-панель** (Go, Docker) — управление параметрами через toggle-переключатели
-2. **Скрипт RouterOS** — по таймеру читает состояние с сервера и включает/выключает правила по comment-тегам
+1. **Веб-панель** (Go, Docker) — toggle-переключатели, таймеры временной разблокировки, аудит-лог
+2. **Скрипт RouterOS 7** — по таймеру читает состояние с сервера и включает/выключает правила по тегам `hook:<name>`
 
-Правила на MikroTik помечаются комментариями вида `hook:<param-name>`. Скрипт находит их и ставит `disabled=yes/no` в зависимости от состояния параметра на сервере.
+```
+[Web UI / PWA] → [Go Backend + Bearer Auth] ← [MikroTik скрипт по таймеру]
+                          ↕
+                   state.json + audit.json
+```
+
+## Возможности
+
+- **Toggle** — включение/выключение firewall-правил и kid-control
+- **Таймеры** — временная разблокировка на 5м, 15м, 30м, 1ч, 3ч, 6ч, 24ч с обратным отсчётом
+- **Kid-control** — инвертированная логика (включён = ребёнок ограничен)
+- **Conntrack clearing** — при включении блокировки автоматически сбрасываются существующие соединения по src/dst-address-list
+- **Аудит-лог** — история всех действий (toggle, таймеры, expired)
+- **Статистика** — счётчики переключений, популярные таймеры
+- **Статус роутера** — heartbeat (онлайн/офлайн) по User-Agent
+- **PWA** — устанавливается на телефон как приложение
+- **Pull-to-refresh** — свайп вниз для обновления
 
 ## Запуск сервера
 
@@ -35,13 +51,13 @@ AUTH_TOKEN=your-secret-token ./hook-server
 
 ## Настройка MikroTik
 
-### 1. Пометьте правила комментариями
+### 1. Пометьте правила тегами
 
-У каждого правила в RouterOS есть поле `comment`. Впишите туда `hook:<имя>`, где `<имя>` — это имя параметра из веб-панели. Скрипт найдёт все правила с таким комментарием и будет включать/выключать их:
+Для **firewall** — в поле `comment`, для **kid-control** — в поле `name`:
 
 ```
-/ip/firewall/filter add chain=forward action=drop comment="hook:block-social" disabled=yes
-/ip/kid-control add name=kids comment="hook:kid-control" disabled=yes
+/ip/firewall/filter add chain=forward action=drop dst-address-list=roblox comment="hook:roblox-drop" disabled=yes
+/ip/kid-control add name="hook:Eva-Laptop" fri=6h-20h mon=6h-19h ...
 ```
 
 ### 2. Скачайте и установите скрипт
@@ -59,26 +75,48 @@ AUTH_TOKEN=your-secret-token ./hook-server
 /system/scheduler add name=remote-hook interval=1m on-event="/system/script/run remote-hook"
 ```
 
-> **Примечание:** используется синтаксис RouterOS 7. Для ROS 6 замените `/` между разделами на пробелы (например `/ip/firewall/filter` → `/ip firewall filter`).
+Обновление скрипта:
+```
+/tool/fetch url="http://your-server:8080/mikrotik/remote-hook.rsc" dst-path=remote-hook.rsc
+/system/script set remote-hook source=[/file/get remote-hook.rsc contents]
+```
+
+> **Примечание:** используется синтаксис RouterOS 7.
 
 ### Поддерживаемые разделы
 
-- `/ip/firewall/filter`
-- `/ip/firewall/nat`
-- `/ip/firewall/mangle`
-- `/ip/kid-control`
+| Раздел | Тег в поле | Логика |
+|--------|-----------|--------|
+| `/ip/firewall/filter` | `comment` | Прямая (enabled = правило активно) |
+| `/ip/firewall/nat` | `comment` | Прямая |
+| `/ip/firewall/mangle` | `comment` | Прямая |
+| `/ip/kid-control` | `name` | Инвертированная (enabled = ограничения сняты) |
 
-Для добавления новых разделов — отредактируйте массив `sections` в скрипте.
+Для добавления новых разделов — отредактируйте массив `sections` в скрипте. Для инвертированной логики — также `invertedSections`.
+
+### Поведение при сбоях
+
+| Ситуация | Поведение |
+|---|---|
+| Сервер недоступен | Скрипт прерывается, правила не трогаются |
+| Пустой/невалидный ответ | Скрипт прерывается, правила не трогаются |
+| Параметр есть на роутере, нет на сервере | Правило не трогается |
+| Параметр есть на сервере, нет на роутере | Игнорируется |
+| Таймаут | 10 секунд, затем прерывание |
 
 ## API
 
-Запросы к `/api/*` требуют заголовок `Authorization: Bearer <token>` (если `AUTH_TOKEN` задан). Остальные URL (UI, скачивание скрипта) доступны без авторизации.
+Запросы к `/api/*` требуют заголовок `Authorization: Bearer <token>` (если `AUTH_TOKEN` задан). Остальные URL доступны без авторизации.
 
 | Метод    | URL             | Auth | Описание                     |
 |----------|-----------------|------|------------------------------|
-| `GET`    | `/api/state`    | да   | Получить состояние параметров |
+| `GET`    | `/api/state`    | да   | Состояние параметров |
 | `POST`   | `/api/state`    | да   | Изменить параметр (`{name, enabled}`) |
-| `POST`   | `/api/params`   | да   | Добавить параметр (`{name, description}`) |
-| `DELETE`  | `/api/params?name=xxx` | да | Удалить параметр      |
-| `GET`    | `/mikrotik/remote-hook.rsc` | нет | Скачать скрипт для MikroTik |
-| `GET`    | `/`             | нет  | Веб-панель управления        |
+| `POST`   | `/api/timer`    | да   | Таймер разблокировки (`{name, minutes}`) |
+| `POST`   | `/api/params`   | да   | Добавить параметр (`{name, description, inverted}`) |
+| `DELETE`  | `/api/params?name=xxx` | да | Удалить параметр |
+| `GET`    | `/api/log`      | да   | Последние 50 событий аудит-лога |
+| `GET`    | `/api/stats`    | да   | Статистика по параметрам |
+| `GET`    | `/api/heartbeat`| да   | Статус подключения роутера |
+| `GET`    | `/mikrotik/remote-hook.rsc` | нет | Скачать скрипт |
+| `GET`    | `/`             | нет  | Веб-панель (PWA) |
