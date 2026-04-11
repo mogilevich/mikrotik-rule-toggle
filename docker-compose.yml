@@ -1,0 +1,15 @@
+services:
+  hook-server:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - LISTEN_ADDR=:8080
+      - DATA_DIR=/data
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+    volumes:
+      - hook-data:/data
+    restart: unless-stopped
+
+volumes:
+  hook-data:

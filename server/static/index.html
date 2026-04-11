@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MikroTik Remote Hook</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 20px; }
+  .container { max-width: 600px; margin: 0 auto; }
+  h1 { margin-bottom: 20px; font-size: 1.5em; }
+  .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); padding: 16px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; }
+  .card .info { flex: 1; }
+  .card .name { font-weight: 600; font-size: 1em; font-family: monospace; }
+  .card .desc { color: #666; font-size: .85em; margin-top: 2px; }
+  .toggle { position: relative; width: 50px; height: 28px; flex-shrink: 0; margin-left: 12px; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .slider { position: absolute; inset: 0; background: #ccc; border-radius: 28px; cursor: pointer; transition: .2s; }
+  .toggle .slider::before { content: ""; position: absolute; width: 22px; height: 22px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+  .toggle input:checked + .slider { background: #4caf50; }
+  .toggle input:checked + .slider::before { transform: translateX(22px); }
+  .delete-btn { background: none; border: none; color: #e53935; cursor: pointer; font-size: 1.2em; margin-left: 12px; padding: 4px 8px; }
+  .delete-btn:hover { background: #fbe9e7; border-radius: 4px; }
+  .add-form { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); padding: 16px; margin-top: 20px; }
+  .add-form h2 { font-size: 1.1em; margin-bottom: 12px; }
+  .add-form input { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 8px; font-size: .95em; }
+  .add-form button { background: #1976d2; color: #fff; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: .95em; }
+  .add-form button:hover { background: #1565c0; }
+  .empty { text-align: center; color: #999; padding: 40px 0; }
+  #token-bar { background: #fff3e0; padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  #token-bar input { flex: 1; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; }
+  #token-bar button { background: #ff9800; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>MikroTik Remote Hook</h1>
+
+  <div id="token-bar">
+    <label for="token">Token:</label>
+    <input type="password" id="token" placeholder="Bearer token" />
+    <button onclick="saveToken()">OK</button>
+  </div>
+
+  <div id="params"></div>
+
+  <div class="add-form">
+    <h2>Добавить параметр</h2>
+    <input type="text" id="new-name" placeholder="Имя (например: block-social)" />
+    <input type="text" id="new-desc" placeholder="Описание" />
+    <button onclick="addParam()">Добавить</button>
+  </div>
+</div>
+
+<script>
+let authToken = localStorage.getItem("hook-token") || "";
+document.getElementById("token").value = authToken;
+
+function saveToken() {
+  authToken = document.getElementById("token").value;
+  localStorage.setItem("hook-token", authToken);
+  loadState();
+}
+
+function headers() {
+  const h = {"Content-Type": "application/json"};
+  if (authToken) h["Authorization"] = "Bearer " + authToken;
+  return h;
+}
+
+async function loadState() {
+  try {
+    const res = await fetch("/api/state", {headers: headers()});
+    if (!res.ok) { document.getElementById("params").innerHTML = '<div class="empty">Ошибка: ' + res.status + '</div>'; return; }
+    const data = await res.json();
+    render(data.params || {});
+  } catch (e) {
+    document.getElementById("params").innerHTML = '<div class="empty">Не удалось подключиться</div>';
+  }
+}
+
+function render(params) {
+  const el = document.getElementById("params");
+  const keys = Object.keys(params).sort();
+  if (!keys.length) { el.innerHTML = '<div class="empty">Нет параметров</div>'; return; }
+  el.innerHTML = keys.map(k => {
+    const p = params[k];
+    return `<div class="card">
+      <div class="info"><div class="name">hook:${k}</div><div class="desc">${esc(p.description)}</div></div>
+      <label class="toggle"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggle('${esc(k)}', this.checked)"><span class="slider"></span></label>
+      <button class="delete-btn" onclick="deleteParam('${esc(k)}')" title="Удалить">&times;</button>
+    </div>`;
+  }).join("");
+}
+
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+async function toggle(name, enabled) {
+  const res = await fetch("/api/state", {method: "POST", headers: headers(), body: JSON.stringify({name, enabled})});
+  if (res.ok) { const data = await res.json(); render(data.params || {}); }
+}
+
+async function addParam() {
+  const name = document.getElementById("new-name").value.trim();
+  const description = document.getElementById("new-desc").value.trim();
+  if (!name) return;
+  const res = await fetch("/api/params", {method: "POST", headers: headers(), body: JSON.stringify({name, description})});
+  if (res.ok) {
+    const data = await res.json(); render(data.params || {});
+    document.getElementById("new-name").value = "";
+    document.getElementById("new-desc").value = "";
+  }
+}
+
+async function deleteParam(name) {
+  if (!confirm("Удалить параметр " + name + "?")) return;
+  const res = await fetch("/api/params?name=" + encodeURIComponent(name), {method: "DELETE", headers: headers()});
+  if (res.ok) { const data = await res.json(); render(data.params || {}); }
+}
+
+loadState();
+</script>
+</body>
+</html>
