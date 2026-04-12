@@ -17,7 +17,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "3"
+:local scriptVersion "4"
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -88,56 +88,63 @@
                 :local hasSrcList ([:typeof $srcList] = "str" && [:len $srcList] > 0)
                 :local hasDstList ([:typeof $dstList] = "str" && [:len $dstList] > 0)
 
+                # Resolve address-list names to actual IPs and clear matching connections
                 :if ($hasSrcList) do={
-                    :local connIds [/ip/firewall/connection find src-address-list=$srcList]
-                    :if ([:len $connIds] > 0) do={
-                        /ip/firewall/connection remove $connIds
-                        :set totalCleared ($totalCleared + [:len $connIds])
+                    :local addrIds [/ip/firewall/address-list find list=$srcList]
+                    :foreach addrId in=$addrIds do={
+                        :local addr [/ip/firewall/address-list get $addrId address]
+                        :local slashPos [:find $addr "/"]
+                        :if ([:typeof $slashPos] = "num") do={ :set addr [:pick $addr 0 $slashPos] }
+                        :local connIds [/ip/firewall/connection find src-address~"^$addr"]
+                        :if ([:len $connIds] > 0) do={
+                            :do { /ip/firewall/connection remove $connIds } on-error={}
+                            :set totalCleared ($totalCleared + [:len $connIds])
+                        }
                     }
                 }
 
                 :if ($hasDstList) do={
-                    :local dstConns [/ip/firewall/connection find dst-address-list=$dstList]
-                    :if ([:len $dstConns] > 0) do={
-                        # If no src-address-list — collect src IPs from matching
-                        # connections and kill ALL their connections (full device block)
-                        :if (!$hasSrcList) do={
-                            :local srcAddrs [:toarray ""]
-                            :foreach connId in=$dstConns do={
-                                :do {
-                                    :local fullAddr [/ip/firewall/connection get $connId src-address]
-                                    :local ip $fullAddr
-                                    :local cp [:find $fullAddr ":"]
-                                    :if ([:typeof $cp] = "num") do={
-                                        :set ip [:pick $fullAddr 0 $cp]
-                                    }
-                                    :local found false
-                                    :foreach a in=$srcAddrs do={
-                                        :if ($a = $ip) do={ :set found true }
-                                    }
-                                    :if (!$found) do={ :set srcAddrs ($srcAddrs , $ip) }
-                                } on-error={}
-                            }
-                            # Kill all connections from collected src addresses
-                            :foreach srcIp in=$srcAddrs do={
-                                :if ([:len $srcIp] > 0) do={
-                                    :local allConns [/ip/firewall/connection find src-address~"^$srcIp:"]
-                                    :if ([:len $allConns] > 0) do={
-                                        /ip/firewall/connection remove $allConns
-                                        :set totalCleared ($totalCleared + [:len $allConns])
-                                        :log info "remote-hook: cleared all connections from $srcIp for $paramName"
-                                    }
+                    # Collect all src IPs that have connections to dst-list addresses
+                    :local srcAddrs [:toarray ""]
+                    :local addrIds [/ip/firewall/address-list find list=$dstList]
+                    :foreach addrId in=$addrIds do={
+                        :local addr [/ip/firewall/address-list get $addrId address]
+                        :local slashPos [:find $addr "/"]
+                        :if ([:typeof $slashPos] = "num") do={ :set addr [:pick $addr 0 $slashPos] }
+                        :local connIds [/ip/firewall/connection find dst-address~"^$addr"]
+                        :foreach connId in=$connIds do={
+                            :do {
+                                :local fullAddr [/ip/firewall/connection get $connId src-address]
+                                :local ip $fullAddr
+                                :local cp [:find $fullAddr ":"]
+                                :if ([:typeof $cp] = "num") do={
+                                    :set ip [:pick $fullAddr 0 $cp]
+                                }
+                                :local found false
+                                :foreach a in=$srcAddrs do={
+                                    :if ($a = $ip) do={ :set found true }
+                                }
+                                :if (!$found) do={ :set srcAddrs ($srcAddrs , $ip) }
+                            } on-error={}
+                        }
+                        # Remove connections to this dst address
+                        :if ([:len $connIds] > 0) do={
+                            :do { /ip/firewall/connection remove $connIds } on-error={}
+                            :set totalCleared ($totalCleared + [:len $connIds])
+                        }
+                    }
+                    # If no src-address-list — also kill ALL connections from collected src IPs
+                    :if (!$hasSrcList) do={
+                        :foreach srcIp in=$srcAddrs do={
+                            :if ([:len $srcIp] > 0) do={
+                                :local allConns [/ip/firewall/connection find src-address~"^$srcIp:"]
+                                :if ([:len $allConns] > 0) do={
+                                    /ip/firewall/connection remove $allConns
+                                    :set totalCleared ($totalCleared + [:len $allConns])
+                                    :log info "remote-hook: cleared all connections from $srcIp for $paramName"
                                 }
                             }
                         }
-                        # Remove dst-list connections (some may already be removed above)
-                        :do {
-                            :local remaining [/ip/firewall/connection find dst-address-list=$dstList]
-                            :if ([:len $remaining] > 0) do={
-                                /ip/firewall/connection remove $remaining
-                                :set totalCleared ($totalCleared + [:len $remaining])
-                            }
-                        } on-error={}
                     }
                 }
 
