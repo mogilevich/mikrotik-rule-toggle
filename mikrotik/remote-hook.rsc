@@ -17,7 +17,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "6"
+:local scriptVersion "7"
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -93,9 +93,18 @@
                     :local addrIds [/ip/firewall/address-list find list=$srcList]
                     :foreach addrId in=$addrIds do={
                         :local addr [/ip/firewall/address-list get $addrId address]
+                        :local isCidr false
                         :local slashPos [:find $addr "/"]
-                        :if ([:typeof $slashPos] = "num") do={ :set addr [:pick $addr 0 $slashPos] }
-                        :local connIds [/ip/firewall/connection find src-address~"^$addr"]
+                        :if ([:typeof $slashPos] = "num") do={
+                            :set addr [:pick $addr 0 $slashPos]
+                            :set isCidr true
+                        }
+                        :local connIds
+                        :if ($isCidr) do={
+                            :set connIds [/ip/firewall/connection find src-address~"^$addr"]
+                        } else={
+                            :set connIds [/ip/firewall/connection find src-address=$addr]
+                        }
                         :if ([:len $connIds] > 0) do={
                             :do { /ip/firewall/connection remove $connIds } on-error={}
                             :set totalCleared ($totalCleared + [:len $connIds])
@@ -109,9 +118,18 @@
                     :local addrIds [/ip/firewall/address-list find list=$dstList]
                     :foreach addrId in=$addrIds do={
                         :local addr [/ip/firewall/address-list get $addrId address]
+                        :local isCidr false
                         :local slashPos [:find $addr "/"]
-                        :if ([:typeof $slashPos] = "num") do={ :set addr [:pick $addr 0 $slashPos] }
-                        :local connIds [/ip/firewall/connection find dst-address~"^$addr"]
+                        :if ([:typeof $slashPos] = "num") do={
+                            :set addr [:pick $addr 0 $slashPos]
+                            :set isCidr true
+                        }
+                        :local connIds
+                        :if ($isCidr) do={
+                            :set connIds [/ip/firewall/connection find dst-address~"^$addr"]
+                        } else={
+                            :set connIds [/ip/firewall/connection find dst-address=$addr]
+                        }
                         :foreach connId in=$connIds do={
                             :do {
                                 :local srcIp [/ip/firewall/connection get $connId src-address]
@@ -131,9 +149,14 @@
                     # Temp-block collected src IPs: add to _temp-block list with 1m TTL
                     # then clear ALL their connections so game sessions die
                     :if (!$hasSrcList) do={
-                        # Ensure drop rule exists for _temp-block list
+                        # Ensure drop rule exists for _temp-block list (before established/related accept)
                         :if ([:len [/ip/firewall/filter find comment="hook:_temp-block"]] = 0) do={
-                            /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block"
+                            :local estRule [/ip/firewall/filter find where chain=forward connection-state~"established"]
+                            :if ([:len $estRule] > 0) do={
+                                /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=($estRule->0)
+                            } else={
+                                /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=0
+                            }
                             :log info "remote-hook: created _temp-block drop rule"
                         }
                         :foreach srcIp in=$srcAddrs do={
