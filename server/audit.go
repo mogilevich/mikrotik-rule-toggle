@@ -140,6 +140,105 @@ func (a *AuditLog) Stats() Stats {
 	return s
 }
 
+// DailyCount holds timer count for a single day.
+type DailyCount struct {
+	Date  string `json:"date"`  // "2006-01-02"
+	Count int    `json:"count"`
+}
+
+// ParamDaily holds daily timer usage + total minutes for a param.
+type ParamDaily struct {
+	Days         []DailyCount `json:"days"`
+	TotalTimers  int          `json:"total_timers"`
+	TotalMinutes int          `json:"total_minutes"` // sum of timer durations
+}
+
+// FilteredStats is the response for the analytics endpoint.
+type FilteredStats struct {
+	ByParam map[string]ParamDaily `json:"by_param"`
+}
+
+// StatsFiltered returns daily timer breakdown for the last N days.
+func (a *AuditLog) StatsFiltered(days int) FilteredStats {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	now := time.Now()
+	loc := now.Location()
+	cutoff := now.AddDate(0, 0, -days).Unix()
+
+	// date → param → count
+	daily := make(map[string]map[string]int)
+	totalTimers := make(map[string]int)
+	totalMinutes := make(map[string]int)
+
+	for _, e := range a.entries {
+		if e.Time < cutoff {
+			continue
+		}
+		if e.Action != "timer" {
+			continue
+		}
+		day := time.Unix(e.Time, 0).In(loc).Format("2006-01-02")
+		if daily[day] == nil {
+			daily[day] = make(map[string]int)
+		}
+		daily[day][e.Param]++
+		totalTimers[e.Param]++
+		totalMinutes[e.Param] += parseMinutesFromDetail(e.Detail)
+	}
+
+	// Collect all param names
+	paramSet := make(map[string]bool)
+	for _, byParam := range daily {
+		for p := range byParam {
+			paramSet[p] = true
+		}
+	}
+
+	// Build ordered day list
+	today := now.In(loc)
+	dayList := make([]string, days)
+	for i := 0; i < days; i++ {
+		dayList[i] = today.AddDate(0, 0, -(days-1-i)).Format("2006-01-02")
+	}
+
+	result := FilteredStats{ByParam: make(map[string]ParamDaily)}
+	for p := range paramSet {
+		pd := ParamDaily{
+			Days:         make([]DailyCount, len(dayList)),
+			TotalTimers:  totalTimers[p],
+			TotalMinutes: totalMinutes[p],
+		}
+		for i, d := range dayList {
+			c := 0
+			if daily[d] != nil {
+				c = daily[d][p]
+			}
+			pd.Days[i] = DailyCount{Date: d, Count: c}
+		}
+		result.ByParam[p] = pd
+	}
+
+	return result
+}
+
+// parseMinutesFromDetail extracts minutes from audit detail like "на 30 мин", "+на 1ч", "на 1ч 30м".
+func parseMinutesFromDetail(detail string) int {
+	total := 0
+	num := 0
+	for _, r := range detail {
+		if r >= '0' && r <= '9' {
+			num = num*10 + int(r-'0')
+		} else if r == 'ч' {
+			total += num * 60
+			num = 0
+		}
+	}
+	total += num
+	return total
+}
+
 // save writes to disk. Must be called with mu held.
 func (a *AuditLog) save() {
 	raw, err := json.MarshalIndent(a.entries, "", "  ")

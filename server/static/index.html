@@ -57,6 +57,9 @@
   .timer-row.timer-active button.cancel { flex: none; padding: 4px 12px; background: #999; }
   .timer-row.timer-active button.cancel:active { background: #777; }
   .timer-row .countdown { font-size: .85em; color: #e65100; font-weight: 600; font-variant-numeric: tabular-nums; flex: 1; }
+  .timer-row .countdown.pending { color: #999; font-weight: 500; }
+  .timer-row.extend-row { border-top: none; padding-top: 4px; margin-top: 0; }
+  .timer-row.extend-row button { background: #ffe0b2; color: #e65100; font-size: .65em; padding: 3px 0; }
 
   /* --- Legend --- */
   .legend { display: flex; gap: 12px; margin-bottom: 12px; font-size: .75em; color: #888; flex-wrap: wrap; }
@@ -99,6 +102,22 @@
   .stat-row .val { font-weight: 600; color: #333; }
   .stat-timers { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
   .stat-timers span { background: #fff3e0; color: #e65100; font-size: .7em; padding: 2px 6px; border-radius: 3px; }
+
+  /* --- Stats tabs & chart --- */
+  .stats-tabs { display: flex; gap: 4px; margin-top: 10px; margin-bottom: 10px; }
+  .stats-tabs button { background: #eee; border: none; padding: 5px 12px; border-radius: 4px; font-size: .8em; cursor: pointer; font-weight: 500; }
+  .stats-tabs button.active { background: #1976d2; color: #fff; }
+  .chart-card { background: #f9f9f9; border-radius: 6px; padding: 10px; margin-bottom: 8px; }
+  .chart-card .chart-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .chart-card .chart-name { font-weight: 600; font-family: monospace; font-size: .9em; }
+  .chart-card .chart-summary { font-size: .75em; color: #666; }
+  .chart-bars { display: flex; align-items: flex-end; gap: 2px; height: 60px; }
+  .chart-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+  .chart-bar { width: 100%; min-width: 3px; background: #ff9800; border-radius: 2px 2px 0 0; transition: height .2s; }
+  .chart-bar.zero { background: #e0e0e0; min-height: 2px; }
+  .chart-labels { display: flex; gap: 2px; margin-top: 2px; }
+  .chart-labels span { flex: 1; text-align: center; font-size: .55em; color: #999; overflow: hidden; }
+  .chart-empty { text-align: center; color: #999; font-size: .85em; padding: 16px 0; }
 </style>
 </head>
 <body>
@@ -127,6 +146,11 @@
 
   <details class="add-form" id="stats-section">
     <summary style="cursor:pointer;font-weight:600;font-size:.95em">Статистика</summary>
+    <div class="stats-tabs" id="stats-tabs">
+      <button onclick="loadStats(1)" data-days="1">1 день</button>
+      <button onclick="loadStats(7)" data-days="7" class="active">7 дней</button>
+      <button onclick="loadStats(30)" data-days="30">30 дней</button>
+    </div>
     <div class="stats-grid" id="stats-grid"></div>
   </details>
 
@@ -199,7 +223,8 @@ function render(params) {
   el.innerHTML = keys.map(k => {
     const p = params[k];
     const inv = p.inverted;
-    const hasTimer = p.disabled_until && (inv ? p.enabled : !p.enabled);
+    const hasPending = p.timer_duration && !p.disabled_until;
+    const hasTimer = (p.disabled_until || hasPending) && (inv ? p.enabled : !p.enabled);
 
     let stateClass, badgeClass, badgeText;
     if (hasTimer) {
@@ -223,10 +248,22 @@ function render(params) {
     const showTimerButtons = inv ? !p.enabled : p.enabled;
 
     let timerRow = "";
-    if (hasTimer) {
+    if (hasPending) {
+      timerRow = `<div class="timer-row timer-active">
+        <span class="countdown pending">ожидание роутера…</span>
+        <button class="cancel" onclick="cancelTimer('${esc(k)}')">Отмена</button>
+      </div>`;
+    } else if (hasTimer) {
       timerRow = `<div class="timer-row timer-active">
         <span class="countdown" data-until="${p.disabled_until}"></span>
-        <button class="cancel" onclick="cancelTimer('${esc(k)}')">${inv ? "Вернуть" : "Вернуть"}</button>
+        <button class="cancel" onclick="cancelTimer('${esc(k)}')">Вернуть</button>
+      </div>
+      <div class="timer-row extend-row">
+        <button onclick="setTimer('${esc(k)}', 5)">+5м</button>
+        <button onclick="setTimer('${esc(k)}', 15)">+15м</button>
+        <button onclick="setTimer('${esc(k)}', 30)">+30м</button>
+        <button onclick="setTimer('${esc(k)}', 60)">+1ч</button>
+        <button onclick="setTimer('${esc(k)}', 180)">+3ч</button>
       </div>`;
     } else if (showTimerButtons) {
       timerRow = `<div class="timer-row">
@@ -329,16 +366,18 @@ async function loadHeartbeat() {
       return;
     }
     const age = data.age_sec;
+    const lastDate = new Date(data.last_seen * 1000);
+    const lastTime = String(lastDate.getHours()).padStart(2,"0") + ":" + String(lastDate.getMinutes()).padStart(2,"0") + ":" + String(lastDate.getSeconds()).padStart(2,"0");
     let dotClass, statusText;
     if (age < 120) {
       dotClass = "online";
-      statusText = "онлайн";
+      statusText = "онлайн · " + lastTime;
     } else if (age < 600) {
       dotClass = "warning";
-      statusText = "был " + formatAge(age);
+      statusText = "был " + formatAge(age) + " · " + lastTime;
     } else {
       dotClass = "offline";
-      statusText = "нет связи (" + formatAge(age) + ")";
+      statusText = "нет связи · " + formatAge(age) + " · " + lastTime;
     }
     el.innerHTML = `<div class="router-dot ${dotClass}"></div><span class="router-label">Роутер:</span> <span class="router-detail">${statusText}</span>`;
   } catch(e) {}
@@ -359,30 +398,57 @@ async function loadLog() {
   } catch(e) {}
 }
 
-async function loadStats() {
+let currentStatsDays = 7;
+
+async function loadStats(days) {
+  if (days) currentStatsDays = days;
+  // Update active tab
+  document.querySelectorAll("#stats-tabs button").forEach(b => {
+    b.classList.toggle("active", parseInt(b.dataset.days) === currentStatsDays);
+  });
   try {
-    const res = await fetch("/api/stats", {headers: headers()});
+    const res = await fetch("/api/stats?days=" + currentStatsDays, {headers: headers()});
     if (!res.ok) return;
     const data = await res.json();
     const el = document.getElementById("stats-grid");
     const params = Object.keys(data.by_param || {}).sort();
-    if (!params.length) { el.innerHTML = '<div style="color:#999;font-size:.85em">Нет данных</div>'; return; }
+    if (!params.length) { el.innerHTML = '<div class="chart-empty">Нет данных за этот период</div>'; return; }
     el.innerHTML = params.map(k => {
-      const s = data.by_param[k];
-      const lastUsed = s.last_used ? new Date(s.last_used * 1000) : null;
-      const lastStr = lastUsed ? (String(lastUsed.getDate()).padStart(2,"0") + "." + String(lastUsed.getMonth()+1).padStart(2,"0") + " " + String(lastUsed.getHours()).padStart(2,"0") + ":" + String(lastUsed.getMinutes()).padStart(2,"0")) : "—";
-      const timers = Object.entries(s.top_timer || {}).sort((a,b) => b[1] - a[1]);
-      const timerHtml = timers.length ? '<div class="stat-timers">' + timers.map(([d,c]) => `<span>${esc(d)} (${c}x)</span>`).join("") + '</div>' : '';
-      return `<div class="stat-card">
-        <div class="stat-name">${esc(k)}</div>
-        <div class="stat-row"><span>Переключений</span><span class="val">${s.toggles}</span></div>
-        <div class="stat-row"><span>Таймеров</span><span class="val">${s.timers}</span></div>
-        <div class="stat-row"><span>Истекло</span><span class="val">${s.expired}</span></div>
-        <div class="stat-row"><span>Последнее</span><span class="val">${lastStr}</span></div>
-        ${timerHtml}
+      const p = data.by_param[k];
+      const days = p.days || [];
+      const maxCount = Math.max(...days.map(d => d.count), 1);
+      const totalH = Math.floor(p.total_minutes / 60);
+      const totalM = p.total_minutes % 60;
+      const timeStr = totalH > 0 ? totalH + "ч " + totalM + "м" : totalM + " мин";
+
+      const barsHtml = days.map(d => {
+        const h = d.count > 0 ? Math.max(8, Math.round((d.count / maxCount) * 56)) : 0;
+        const cls = d.count > 0 ? "chart-bar" : "chart-bar zero";
+        const title = formatDateShort(d.date) + ": " + d.count + " раз";
+        return `<div class="chart-bar-wrap"><div class="${cls}" style="height:${h}px" title="${title}"></div></div>`;
+      }).join("");
+
+      // Labels: show some dates
+      const labelsHtml = days.map((d, i) => {
+        const show = days.length <= 7 || i === 0 || i === days.length - 1 || i === Math.floor(days.length / 2);
+        return `<span>${show ? formatDateShort(d.date) : ""}</span>`;
+      }).join("");
+
+      return `<div class="chart-card">
+        <div class="chart-header">
+          <span class="chart-name">${esc(k)}</span>
+          <span class="chart-summary">${p.total_timers} раз · ${timeStr}</span>
+        </div>
+        <div class="chart-bars">${barsHtml}</div>
+        <div class="chart-labels">${labelsHtml}</div>
       </div>`;
     }).join("");
   } catch(e) {}
+}
+
+function formatDateShort(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  return String(d.getDate()).padStart(2,"0") + "." + String(d.getMonth()+1).padStart(2,"0");
 }
 
 // Load log/stats when details is opened

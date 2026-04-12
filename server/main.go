@@ -64,7 +64,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	audit := NewAuditLog(filepath.Join(dataDir, "audit.json"), 200)
+	audit := NewAuditLog(filepath.Join(dataDir, "audit.json"), 2000)
 	hb := &Heartbeat{}
 
 	// Background ticker: re-enable params whose timer has expired
@@ -134,7 +134,20 @@ func main() {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(audit.Stats())
+		daysStr := r.URL.Query().Get("days")
+		if daysStr != "" {
+			days := 7
+			fmt.Sscanf(daysStr, "%d", &days)
+			if days < 1 {
+				days = 1
+			}
+			if days > 90 {
+				days = 90
+			}
+			json.NewEncoder(w).Encode(audit.StatsFiltered(days))
+		} else {
+			json.NewEncoder(w).Encode(audit.Stats())
+		}
 	})
 
 	// Serve MikroTik script for download
@@ -187,6 +200,7 @@ func handleGetState(w http.ResponseWriter, r *http.Request, store *Store, hb *He
 	ua := r.Header.Get("User-Agent")
 	if strings.Contains(strings.ToLower(ua), "mikrotik") || strings.Contains(strings.ToLower(ua), "routeros") {
 		hb.Touch()
+		store.ActivatePendingTimers()
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(store.GetState())
@@ -235,11 +249,16 @@ func handleTimer(w http.ResponseWriter, r *http.Request, store *Store, audit *Au
 		http.Error(w, "name and minutes (>0) are required", http.StatusBadRequest)
 		return
 	}
-	if !store.TempRelease(req.Name, time.Duration(req.Minutes)*time.Minute) {
+	found, extended := store.TempRelease(req.Name, time.Duration(req.Minutes)*time.Minute)
+	if !found {
 		http.Error(w, "param not found", http.StatusNotFound)
 		return
 	}
-	audit.Add(req.Name, "timer", formatDuration(req.Minutes))
+	if extended {
+		audit.Add(req.Name, "timer", "+"+formatDuration(req.Minutes))
+	} else {
+		audit.Add(req.Name, "timer", formatDuration(req.Minutes))
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(store.GetState())
 }
