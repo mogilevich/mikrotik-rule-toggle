@@ -17,7 +17,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "5"
+:local scriptVersion "6"
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -104,7 +104,7 @@
                 }
 
                 :if ($hasDstList) do={
-                    # Collect all src IPs that have connections to dst-list addresses
+                    # Collect unique src IPs that have connections to dst-list addresses
                     :local srcAddrs [:toarray ""]
                     :local addrIds [/ip/firewall/address-list find list=$dstList]
                     :foreach addrId in=$addrIds do={
@@ -128,15 +128,26 @@
                             :set totalCleared ($totalCleared + [:len $connIds])
                         }
                     }
-                    # If no src-address-list — also kill ALL connections from collected src IPs
+                    # Temp-block collected src IPs: add to _temp-block list with 1m TTL
+                    # then clear ALL their connections so game sessions die
                     :if (!$hasSrcList) do={
+                        # Ensure drop rule exists for _temp-block list
+                        :if ([:len [/ip/firewall/filter find comment="hook:_temp-block"]] = 0) do={
+                            /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block"
+                            :log info "remote-hook: created _temp-block drop rule"
+                        }
                         :foreach srcIp in=$srcAddrs do={
                             :if ([:len $srcIp] > 0) do={
+                                # Add to temp block list (1 minute TTL)
+                                :do {
+                                    /ip/firewall/address-list add list=_temp-block address=$srcIp timeout=1m
+                                    :log info "remote-hook: temp-blocked $srcIp for 1m ($paramName)"
+                                } on-error={}
+                                # Kill all existing connections
                                 :local allConns [/ip/firewall/connection find src-address=$srcIp]
                                 :if ([:len $allConns] > 0) do={
-                                    /ip/firewall/connection remove $allConns
+                                    :do { /ip/firewall/connection remove $allConns } on-error={}
                                     :set totalCleared ($totalCleared + [:len $allConns])
-                                    :log info "remote-hook: cleared all connections from $srcIp for $paramName"
                                 }
                             }
                         }
