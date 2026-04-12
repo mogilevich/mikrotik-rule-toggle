@@ -17,7 +17,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "10"
+:local scriptVersion "11"
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -225,8 +225,8 @@
                     :foreach srcIp in=$preCollectedSrc do={
                         :if ([:len $srcIp] > 0) do={
                             :do {
-                                /ip/firewall/address-list add list=_temp-block address=$srcIp timeout=1m
-                                :log info "remote-hook: temp-blocked $srcIp for 1m ($paramName)"
+                                /ip/firewall/address-list add list=_temp-block address=$srcIp timeout=30s
+                                :log info "remote-hook: temp-blocked $srcIp for 30s ($paramName)"
                             } on-error={}
                             :local allConns [/ip/firewall/connection find src-address=$srcIp]
                             :if ([:len $allConns] > 0) do={
