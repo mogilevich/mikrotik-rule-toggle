@@ -40,9 +40,9 @@ curl -H "Authorization: Bearer test" http://localhost:8080/api/state
 - `server/static/manifest.json` + `sw.js` — PWA support
 - `server/static/icon.svg` — MikroTik logo (Simple Icons), used as favicon
 - `server/static/icon-192.svg` — MikroTik logo on blue background, used as PWA/apple-touch-icon
-- `mikrotik/remote-hook.rsc` — RouterOS 7 script, in-memory fetch, conntrack clearing, sends `X-Script-Version` header
+- `mikrotik/remote-hook.rsc` — RouterOS 7 script, in-memory fetch, conntrack clearing, temp-block, auto-update, sends `X-Script-Version` header
 
-- `entrypoint.sh` — replaces `your-server` placeholder in .rsc with `HOST_IP` env at container startup
+- `entrypoint.sh` — replaces `your-server` and `token` placeholders in .rsc with `HOST_IP` and `AUTH_TOKEN` env at container startup
 - `Dockerfile` — multi-stage build (golang → alpine)
 - `.github/workflows/build.yml` — CI: builds Docker image, pushes to ghcr.io on push to master
 - `Makefile` — `make up/down/logs/pull/restart/build-local`, auto-detects host IP via `ip route` (Linux) or `ipconfig` (macOS)
@@ -57,7 +57,9 @@ Single `main` package, no internal packages. Static files embedded via `//go:emb
 - Scans configurable `sections` array (firewall filter/nat/mangle, kid-control)
 - Uses `:parse` to dynamically build commands — intentional due to RouterOS limitations
 - JSON parsing via string search (`:find`) — RouterOS has no JSON parser
-- Conntrack clearing: reads `src-address-list` and `dst-address-list` from rule, clears matching connections after successful enable
+- Conntrack clearing: resolves address-lists to IPs via `/ip/firewall/address-list`, exact match for IPs, regex for CIDR
+- Temp-block: collects src IPs (from src-address-list, src-address, or conntrack scan), adds to `_temp-block` with 30s TTL, kills all connections. Drop rule auto-created before established/related accept
+- Pre-collection: src IPs gathered BEFORE rule enable (connections may disappear after drop activates)
 - Fetch: `output=user as-value` (in-memory, no disk writes), `duration=10` (10s timeout)
 - Fail-safe: any fetch/parse error → script aborts, no rules changed
 - `scriptVersion` variable — increment on every .rsc change (server compares with router's `X-Script-Version` header)
