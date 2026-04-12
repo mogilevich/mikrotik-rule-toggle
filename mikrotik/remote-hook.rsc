@@ -17,7 +17,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "7"
+:local scriptVersion "8"
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -149,15 +149,21 @@
                     # Temp-block collected src IPs: add to _temp-block list with 1m TTL
                     # then clear ALL their connections so game sessions die
                     :if (!$hasSrcList) do={
-                        # Ensure drop rule exists for _temp-block list (before established/related accept)
-                        :if ([:len [/ip/firewall/filter find comment="hook:_temp-block"]] = 0) do={
-                            :local estRule [/ip/firewall/filter find where chain=forward connection-state~"established"]
+                        # Ensure drop rule exists before established/related accept
+                        :local tbRule [/ip/firewall/filter find comment="hook:_temp-block"]
+                        :local estRule [/ip/firewall/filter find where chain=forward connection-state~"established"]
+                        :if ([:len $tbRule] = 0) do={
                             :if ([:len $estRule] > 0) do={
                                 /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=($estRule->0)
                             } else={
                                 /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=0
                             }
                             :log info "remote-hook: created _temp-block drop rule"
+                        } else={
+                            # Move if it ended up after established/related
+                            :if ([:len $estRule] > 0) do={
+                                :do { /ip/firewall/filter move ($tbRule->0) ($estRule->0) } on-error={}
+                            }
                         }
                         :foreach srcIp in=$srcAddrs do={
                             :if ([:len $srcIp] > 0) do={
