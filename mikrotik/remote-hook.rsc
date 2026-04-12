@@ -17,7 +17,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "8"
+:local scriptVersion "9"
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -70,6 +70,49 @@
             :set currentDisabled [[:parse ":return [$section get $ruleId disabled]"]]
         } on-error={}
         :if ($currentDisabled = true) do={
+            # Pre-collect src IPs from conntrack BEFORE enabling the rule
+            # (connections to dst-list may disappear quickly after enable)
+            :local srcList ""
+            :local dstList ""
+            :local preCollectedSrc [:toarray ""]
+            :local hasSrcList false
+            :local hasDstList false
+            :if ([:find $section "firewall"] != nothing) do={
+                :do { :set srcList [[:parse ":return [$section get $ruleId src-address-list]"]] } on-error={}
+                :do { :set dstList [[:parse ":return [$section get $ruleId dst-address-list]"]] } on-error={}
+                :set hasSrcList ([:typeof $srcList] = "str" && [:len $srcList] > 0)
+                :set hasDstList ([:typeof $dstList] = "str" && [:len $dstList] > 0)
+                :if ($hasDstList && !$hasSrcList) do={
+                    :local addrIds [/ip/firewall/address-list find list=$dstList]
+                    :foreach addrId in=$addrIds do={
+                        :local addr [/ip/firewall/address-list get $addrId address]
+                        :local isCidr false
+                        :local slashPos [:find $addr "/"]
+                        :if ([:typeof $slashPos] = "num") do={
+                            :set addr [:pick $addr 0 $slashPos]
+                            :set isCidr true
+                        }
+                        :local connIds
+                        :if ($isCidr) do={
+                            :set connIds [/ip/firewall/connection find dst-address~"^$addr"]
+                        } else={
+                            :set connIds [/ip/firewall/connection find dst-address=$addr]
+                        }
+                        :foreach connId in=$connIds do={
+                            :do {
+                                :local srcIp [/ip/firewall/connection get $connId src-address]
+                                :local found false
+                                :foreach a in=$preCollectedSrc do={
+                                    :if ($a = $srcIp) do={ :set found true }
+                                }
+                                :if (!$found) do={ :set preCollectedSrc ($preCollectedSrc , $srcIp) }
+                            } on-error={}
+                        }
+                    }
+                }
+            }
+
+            # Enable the rule
             :local enableOk false
             :do {
                 [[:parse "$section set $ruleId disabled=no"]]
@@ -78,17 +121,12 @@
             } on-error={
                 :log warning "remote-hook: failed to enable $paramName in $section"
             }
+
             # Clear connection tracking only if rule was successfully enabled
             :if ($enableOk && [:find $section "firewall"] != nothing) do={
-                :local srcList ""
-                :local dstList ""
-                :do { :set srcList [[:parse ":return [$section get $ruleId src-address-list]"]] } on-error={}
-                :do { :set dstList [[:parse ":return [$section get $ruleId dst-address-list]"]] } on-error={}
                 :local totalCleared 0
-                :local hasSrcList ([:typeof $srcList] = "str" && [:len $srcList] > 0)
-                :local hasDstList ([:typeof $dstList] = "str" && [:len $dstList] > 0)
 
-                # Resolve address-list names to actual IPs and clear matching connections
+                # Clear connections matching src-address-list
                 :if ($hasSrcList) do={
                     :local addrIds [/ip/firewall/address-list find list=$srcList]
                     :foreach addrId in=$addrIds do={
@@ -112,9 +150,9 @@
                     }
                 }
 
+                # Clear dst-list connections and temp-block src devices
                 :if ($hasDstList) do={
-                    # Collect unique src IPs that have connections to dst-list addresses
-                    :local srcAddrs [:toarray ""]
+                    # Remove remaining connections to dst-list addresses
                     :local addrIds [/ip/firewall/address-list find list=$dstList]
                     :foreach addrId in=$addrIds do={
                         :local addr [/ip/firewall/address-list get $addrId address]
@@ -130,17 +168,6 @@
                         } else={
                             :set connIds [/ip/firewall/connection find dst-address=$addr]
                         }
-                        :foreach connId in=$connIds do={
-                            :do {
-                                :local srcIp [/ip/firewall/connection get $connId src-address]
-                                :local found false
-                                :foreach a in=$srcAddrs do={
-                                    :if ($a = $srcIp) do={ :set found true }
-                                }
-                                :if (!$found) do={ :set srcAddrs ($srcAddrs , $srcIp) }
-                            } on-error={}
-                        }
-                        # Remove connections to this dst address
                         :if ([:len $connIds] > 0) do={
                             :do { /ip/firewall/connection remove $connIds } on-error={}
                             :set totalCleared ($totalCleared + [:len $connIds])
@@ -165,7 +192,7 @@
                                 :do { /ip/firewall/filter move ($tbRule->0) ($estRule->0) } on-error={}
                             }
                         }
-                        :foreach srcIp in=$srcAddrs do={
+                        :foreach srcIp in=$preCollectedSrc do={
                             :if ([:len $srcIp] > 0) do={
                                 # Add to temp block list (1 minute TTL)
                                 :do {
