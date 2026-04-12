@@ -22,19 +22,23 @@ var staticFiles embed.FS
 
 // Heartbeat tracks when MikroTik last fetched state
 type Heartbeat struct {
-	mu       sync.RWMutex
-	lastSeen time.Time
+	mu            sync.RWMutex
+	lastSeen      time.Time
+	routerVersion string // script version reported by router
+	serverVersion string // script version extracted from .rsc on server
 }
 
-func (h *Heartbeat) Touch() {
+func (h *Heartbeat) Touch(routerVersion string) {
 	h.mu.Lock()
 	h.lastSeen = time.Now()
+	h.routerVersion = routerVersion
 	h.mu.Unlock()
 }
 
 type heartbeatResponse struct {
-	LastSeen *int64 `json:"last_seen"` // unix timestamp, nil = never
-	AgeSec   int    `json:"age_sec"`   // seconds since last seen
+	LastSeen       *int64 `json:"last_seen"`                 // unix timestamp, nil = never
+	AgeSec         int    `json:"age_sec"`                   // seconds since last seen
+	ScriptOutdated bool   `json:"script_outdated,omitempty"` // true if router script != server script
 }
 
 func (h *Heartbeat) Info() heartbeatResponse {
@@ -44,9 +48,11 @@ func (h *Heartbeat) Info() heartbeatResponse {
 		return heartbeatResponse{}
 	}
 	ts := h.lastSeen.Unix()
+	outdated := h.serverVersion != "" && h.routerVersion != h.serverVersion
 	return heartbeatResponse{
-		LastSeen: &ts,
-		AgeSec:   int(time.Since(h.lastSeen).Seconds()),
+		LastSeen:       &ts,
+		AgeSec:         int(time.Since(h.lastSeen).Seconds()),
+		ScriptOutdated: outdated,
 	}
 }
 
@@ -65,7 +71,7 @@ func main() {
 	}
 
 	audit := NewAuditLog(filepath.Join(dataDir, "audit.json"), 2000)
-	hb := &Heartbeat{}
+	hb := &Heartbeat{serverVersion: extractScriptVersion("/mikrotik/remote-hook.rsc")}
 
 	// Background ticker: re-enable params whose timer has expired
 	go func() {
@@ -199,7 +205,7 @@ func handleGetState(w http.ResponseWriter, r *http.Request, store *Store, hb *He
 	// Detect MikroTik fetch by User-Agent
 	ua := r.Header.Get("User-Agent")
 	if strings.Contains(strings.ToLower(ua), "mikrotik") || strings.Contains(strings.ToLower(ua), "routeros") {
-		hb.Touch()
+		hb.Touch(r.Header.Get("X-Script-Version"))
 		store.ActivatePendingTimers()
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -316,4 +322,25 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// extractScriptVersion reads the .rsc file and extracts scriptVersion value.
+func extractScriptVersion(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("WARN: cannot read script %s: %v", path, err)
+		return ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		// :local scriptVersion "1"
+		if strings.HasPrefix(line, ":local scriptVersion") {
+			q1 := strings.Index(line, "\"")
+			q2 := strings.LastIndex(line, "\"")
+			if q1 != -1 && q2 > q1 {
+				return line[q1+1 : q2]
+			}
+		}
+	}
+	return ""
 }

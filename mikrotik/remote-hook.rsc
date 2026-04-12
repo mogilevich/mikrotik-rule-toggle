@@ -17,15 +17,16 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
+:local scriptVersion "1"
 
 # --- Fetch state from server (in memory, no disk writes) ---
 :local content ""
 
 :do {
     :if ($token != "") do={
-        :set content ([/tool/fetch url=$url http-header-field="Authorization: Bearer $token" output=user as-value duration=10]->"data")
+        :set content ([/tool/fetch url=$url http-header-field="Authorization: Bearer $token,X-Script-Version: $scriptVersion" output=user as-value duration=10]->"data")
     } else={
-        :set content ([/tool/fetch url=$url output=user as-value duration=10]->"data")
+        :set content ([/tool/fetch url=$url http-header-field="X-Script-Version: $scriptVersion" output=user as-value duration=10]->"data")
     }
 } on-error={
     :log warning "remote-hook: failed to fetch state from $url"
