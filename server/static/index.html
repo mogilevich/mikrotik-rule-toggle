@@ -274,7 +274,8 @@ function render(params) {
         <button onclick="setTimer('${esc(k)}', 60)">1ч</button>
         <button onclick="setTimer('${esc(k)}', 180)">3ч</button>
         <button onclick="setTimer('${esc(k)}', 360)">6ч</button>
-        <button onclick="setTimer('${esc(k)}', 1440)">24ч</button>
+        ${untilBtn(k, 20, 'до 20:00')}
+        ${untilBtn(k, 23, 'до 23:00')}
       </div>`;
     }
 
@@ -294,6 +295,16 @@ function render(params) {
     </div>`;
   }).join("");
   updateCountdowns();
+}
+
+function untilBtn(name, hour, label) {
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(hour, 0, 0, 0);
+  if (target <= now) return "";
+  const mins = Math.round((target - now) / 60000);
+  if (mins < 5) return "";
+  return `<button onclick="setTimer('${esc(name)}', ${mins})">${label}</button>`;
 }
 
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
