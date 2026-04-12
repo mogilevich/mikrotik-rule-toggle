@@ -17,7 +17,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "4"
+:local scriptVersion "5"
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -114,17 +114,12 @@
                         :local connIds [/ip/firewall/connection find dst-address~"^$addr"]
                         :foreach connId in=$connIds do={
                             :do {
-                                :local fullAddr [/ip/firewall/connection get $connId src-address]
-                                :local ip $fullAddr
-                                :local cp [:find $fullAddr ":"]
-                                :if ([:typeof $cp] = "num") do={
-                                    :set ip [:pick $fullAddr 0 $cp]
-                                }
+                                :local srcIp [/ip/firewall/connection get $connId src-address]
                                 :local found false
                                 :foreach a in=$srcAddrs do={
-                                    :if ($a = $ip) do={ :set found true }
+                                    :if ($a = $srcIp) do={ :set found true }
                                 }
-                                :if (!$found) do={ :set srcAddrs ($srcAddrs , $ip) }
+                                :if (!$found) do={ :set srcAddrs ($srcAddrs , $srcIp) }
                             } on-error={}
                         }
                         # Remove connections to this dst address
@@ -137,7 +132,7 @@
                     :if (!$hasSrcList) do={
                         :foreach srcIp in=$srcAddrs do={
                             :if ([:len $srcIp] > 0) do={
-                                :local allConns [/ip/firewall/connection find src-address~"^$srcIp:"]
+                                :local allConns [/ip/firewall/connection find src-address=$srcIp]
                                 :if ([:len $allConns] > 0) do={
                                     /ip/firewall/connection remove $allConns
                                     :set totalCleared ($totalCleared + [:len $allConns])
