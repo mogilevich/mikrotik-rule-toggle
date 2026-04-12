@@ -17,7 +17,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "9"
+:local scriptVersion "10"
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -70,19 +70,45 @@
             :set currentDisabled [[:parse ":return [$section get $ruleId disabled]"]]
         } on-error={}
         :if ($currentDisabled = true) do={
-            # Pre-collect src IPs from conntrack BEFORE enabling the rule
-            # (connections to dst-list may disappear quickly after enable)
+            # Pre-collect src IPs for temp-block BEFORE enabling the rule
             :local srcList ""
+            :local srcAddr ""
             :local dstList ""
             :local preCollectedSrc [:toarray ""]
             :local hasSrcList false
+            :local hasSrcAddr false
             :local hasDstList false
             :if ([:find $section "firewall"] != nothing) do={
                 :do { :set srcList [[:parse ":return [$section get $ruleId src-address-list]"]] } on-error={}
+                :do { :set srcAddr [[:parse ":return [$section get $ruleId src-address]"]] } on-error={}
                 :do { :set dstList [[:parse ":return [$section get $ruleId dst-address-list]"]] } on-error={}
                 :set hasSrcList ([:typeof $srcList] = "str" && [:len $srcList] > 0)
+                :set hasSrcAddr ([:typeof $srcAddr] = "str" && [:len $srcAddr] > 0)
                 :set hasDstList ([:typeof $dstList] = "str" && [:len $dstList] > 0)
-                :if ($hasDstList && !$hasSrcList) do={
+
+                # Priority 1: src-address-list → resolve to IPs
+                :if ($hasSrcList) do={
+                    :local addrIds [/ip/firewall/address-list find list=$srcList]
+                    :foreach addrId in=$addrIds do={
+                        :local addr [/ip/firewall/address-list get $addrId address]
+                        :local slashPos [:find $addr "/"]
+                        :if ([:typeof $slashPos] = "num") do={ :set addr [:pick $addr 0 $slashPos] }
+                        :local found false
+                        :foreach a in=$preCollectedSrc do={
+                            :if ($a = $addr) do={ :set found true }
+                        }
+                        :if (!$found) do={ :set preCollectedSrc ($preCollectedSrc , $addr) }
+                    }
+                }
+                # Priority 2: src-address → use directly
+                :if ($hasSrcAddr && !$hasSrcList) do={
+                    :local addr $srcAddr
+                    :local slashPos [:find $addr "/"]
+                    :if ([:typeof $slashPos] = "num") do={ :set addr [:pick $addr 0 $slashPos] }
+                    :set preCollectedSrc ($preCollectedSrc , $addr)
+                }
+                # Priority 3: no src info → scan conntrack by dst-address-list
+                :if (!$hasSrcList && !$hasSrcAddr && $hasDstList) do={
                     :local addrIds [/ip/firewall/address-list find list=$dstList]
                     :foreach addrId in=$addrIds do={
                         :local addr [/ip/firewall/address-list get $addrId address]
@@ -150,9 +176,8 @@
                     }
                 }
 
-                # Clear dst-list connections and temp-block src devices
+                # Clear dst-list connections
                 :if ($hasDstList) do={
-                    # Remove remaining connections to dst-list addresses
                     :local addrIds [/ip/firewall/address-list find list=$dstList]
                     :foreach addrId in=$addrIds do={
                         :local addr [/ip/firewall/address-list get $addrId address]
@@ -173,38 +198,40 @@
                             :set totalCleared ($totalCleared + [:len $connIds])
                         }
                     }
-                    # Temp-block collected src IPs: add to _temp-block list with 1m TTL
-                    # then clear ALL their connections so game sessions die
-                    :if (!$hasSrcList) do={
-                        # Ensure drop rule exists before established/related accept
-                        :local tbRule [/ip/firewall/filter find comment="hook:_temp-block"]
-                        :local estRule [/ip/firewall/filter find where chain=forward connection-state~"established"]
-                        :if ([:len $tbRule] = 0) do={
-                            :if ([:len $estRule] > 0) do={
-                                /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=($estRule->0)
-                            } else={
-                                /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=0
-                            }
-                            :log info "remote-hook: created _temp-block drop rule"
+                }
+
+                # Temp-block pre-collected src IPs for 1m, then kill all their connections
+                # Check if we have real IPs (not just empty initial element)
+                :local hasRealSrc false
+                :foreach chk in=$preCollectedSrc do={
+                    :if ([:len $chk] > 0) do={ :set hasRealSrc true }
+                }
+                :if ($hasRealSrc) do={
+                    # Ensure drop rule exists before established/related accept
+                    :local tbRule [/ip/firewall/filter find comment="hook:_temp-block"]
+                    :local estRule [/ip/firewall/filter find where chain=forward connection-state~"established"]
+                    :if ([:len $tbRule] = 0) do={
+                        :if ([:len $estRule] > 0) do={
+                            /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=($estRule->0)
                         } else={
-                            # Move if it ended up after established/related
-                            :if ([:len $estRule] > 0) do={
-                                :do { /ip/firewall/filter move ($tbRule->0) ($estRule->0) } on-error={}
-                            }
+                            /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=0
                         }
-                        :foreach srcIp in=$preCollectedSrc do={
-                            :if ([:len $srcIp] > 0) do={
-                                # Add to temp block list (1 minute TTL)
-                                :do {
-                                    /ip/firewall/address-list add list=_temp-block address=$srcIp timeout=1m
-                                    :log info "remote-hook: temp-blocked $srcIp for 1m ($paramName)"
-                                } on-error={}
-                                # Kill all existing connections
-                                :local allConns [/ip/firewall/connection find src-address=$srcIp]
-                                :if ([:len $allConns] > 0) do={
-                                    :do { /ip/firewall/connection remove $allConns } on-error={}
-                                    :set totalCleared ($totalCleared + [:len $allConns])
-                                }
+                        :log info "remote-hook: created _temp-block drop rule"
+                    } else={
+                        :if ([:len $estRule] > 0) do={
+                            :do { /ip/firewall/filter move ($tbRule->0) ($estRule->0) } on-error={}
+                        }
+                    }
+                    :foreach srcIp in=$preCollectedSrc do={
+                        :if ([:len $srcIp] > 0) do={
+                            :do {
+                                /ip/firewall/address-list add list=_temp-block address=$srcIp timeout=1m
+                                :log info "remote-hook: temp-blocked $srcIp for 1m ($paramName)"
+                            } on-error={}
+                            :local allConns [/ip/firewall/connection find src-address=$srcIp]
+                            :if ([:len $allConns] > 0) do={
+                                :do { /ip/firewall/connection remove $allConns } on-error={}
+                                :set totalCleared ($totalCleared + [:len $allConns])
                             }
                         }
                     }
