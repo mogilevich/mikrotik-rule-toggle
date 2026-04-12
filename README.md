@@ -17,27 +17,34 @@
 
 - **Toggle** — включение/выключение firewall-правил и kid-control
 - **Таймеры** — временная разблокировка на 5м, 15м, 30м, 1ч, 3ч, 6ч, 24ч с обратным отсчётом
+- **Продление таймеров** — кнопки +5м/+15м/+30м/+1ч/+3ч для активного таймера
+- **Pending-таймеры** — отсчёт начинается только когда роутер забирает настройки
 - **Kid-control** — инвертированная логика (включён = ребёнок ограничен)
 - **Conntrack clearing** — при включении блокировки автоматически сбрасываются существующие соединения по src/dst-address-list
-- **Аудит-лог** — история всех действий (toggle, таймеры, expired)
-- **Статистика** — счётчики переключений, популярные таймеры
-- **Статус роутера** — heartbeat (онлайн/офлайн) по User-Agent
+- **Аудит-лог** — история всех действий (toggle, таймеры, expired), до 2000 записей
+- **Аналитика** — графики использования таймеров за 1/7/30 дней с разбивкой по суткам
+- **Статус роутера** — heartbeat (онлайн/офлайн) с точным временем последнего обращения
+- **Версионирование скрипта** — предупреждение в UI если скрипт на роутере устарел
 - **PWA** — устанавливается на телефон как приложение
 - **Pull-to-refresh** — свайп вниз для обновления
+- **CI/CD** — GitHub Actions собирает Docker-образ и пушит в ghcr.io
 
 ## Запуск сервера
 
 ```bash
-# Самый простой способ (автоопределение IP хоста)
+# Самый простой способ — pull готового образа и запуск
 make up
 
-# Или с явным указанием IP и токена
-HOST_IP=10.0.0.5 AUTH_TOKEN=secret docker compose up --build -d
+# С явным указанием IP и токена
+HOST_IP=10.0.0.5 AUTH_TOKEN=secret docker compose up -d
 
-# Или через .env файл
+# Через .env файл
 echo "HOST_IP=10.0.0.5" > .env
 echo "AUTH_TOKEN=secret" >> .env
-docker compose up --build -d
+docker compose up -d
+
+# Локальная сборка (без CI)
+make build-local
 
 # Без Docker
 go build -o hook-server ./server/
@@ -52,10 +59,20 @@ AUTH_TOKEN=secret ./hook-server
 
 | Команда | Описание |
 |---------|----------|
-| `make up` | Сборка и запуск (IP определяется автоматически) |
+| `make up` | Запуск (образ из ghcr.io, IP определяется автоматически) |
 | `make down` | Остановка |
 | `make logs` | Просмотр логов |
-| `make restart` | Пересборка и перезапуск |
+| `make pull` | Подтянуть новый образ из ghcr.io |
+| `make restart` | Pull + пересоздание контейнера (обновление на сервере) |
+| `make build-local` | Локальная сборка и запуск |
+
+### Обновление на сервере
+
+После пуша в master GitHub Actions автоматически соберёт образ. На сервере:
+
+```bash
+make restart
+```
 
 ### Переменные окружения
 
@@ -91,7 +108,10 @@ AUTH_TOKEN=secret ./hook-server
 /system/scheduler add name=remote-hook interval=1m on-event="/system/script/run remote-hook"
 ```
 
-Обновление скрипта:
+### 3. Обновление скрипта на роутере
+
+Когда в UI появится предупреждение «Скрипт на роутере устарел»:
+
 ```
 /tool/fetch url="http://your-server:8080/mikrotik/remote-hook.rsc" dst-path=remote-hook.rsc
 /system/script set remote-hook source=[/file/get remote-hook.rsc contents]
@@ -133,6 +153,7 @@ AUTH_TOKEN=secret ./hook-server
 | `DELETE`  | `/api/params?name=xxx` | да | Удалить параметр |
 | `GET`    | `/api/log`      | да   | Последние 50 событий аудит-лога |
 | `GET`    | `/api/stats`    | да   | Статистика по параметрам |
-| `GET`    | `/api/heartbeat`| да   | Статус подключения роутера |
+| `GET`    | `/api/stats?days=N` | да | Аналитика таймеров за N дней (1–90) с разбивкой по суткам |
+| `GET`    | `/api/heartbeat`| да   | Статус подключения роутера + версия скрипта |
 | `GET`    | `/mikrotik/remote-hook.rsc` | нет | Скачать скрипт |
 | `GET`    | `/`             | нет  | Веб-панель (PWA) |

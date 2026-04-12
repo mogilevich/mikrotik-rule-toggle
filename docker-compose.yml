@@ -1,6 +1,6 @@
 services:
   hook-server:
-    build: .
+    image: ghcr.io/mogilevich/mikrotik-rule-toggle:latest
     ports:
       - "8080:8080"
     environment:

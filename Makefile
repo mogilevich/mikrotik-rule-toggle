@@ -4,7 +4,7 @@ HOST_IP := $(shell ipconfig getifaddr en0 2>/dev/null)
 endif
 
 up:
-	HOST_IP=$(HOST_IP) docker compose up --build -d
+	HOST_IP=$(HOST_IP) docker compose up -d
 
 down:
 	docker compose down
@@ -12,5 +12,12 @@ down:
 logs:
 	docker compose logs -f
 
-restart:
-	HOST_IP=$(HOST_IP) docker compose up --build -d --force-recreate
+pull:
+	docker compose pull
+
+restart: pull
+	HOST_IP=$(HOST_IP) docker compose up -d --force-recreate
+
+build-local:
+	docker build -t ghcr.io/mogilevich/mikrotik-rule-toggle:latest .
+	HOST_IP=$(HOST_IP) docker compose up -d --force-recreate

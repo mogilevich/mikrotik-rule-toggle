@@ -15,11 +15,17 @@ go build -o hook-server ./server/
 # Run locally
 AUTH_TOKEN=test ./hook-server
 
-# Docker via Make (auto-detects host IP for .rsc script)
+# Docker via Make (pulls pre-built image from ghcr.io)
 make up
 
 # Docker manually
-HOST_IP=10.0.0.5 docker compose up --build
+HOST_IP=10.0.0.5 docker compose up -d
+
+# Local build (without CI)
+make build-local
+
+# Update on server (pull new image + restart)
+make restart
 
 # Test API
 curl -H "Authorization: Bearer test" http://localhost:8080/api/state
@@ -27,17 +33,19 @@ curl -H "Authorization: Bearer test" http://localhost:8080/api/state
 
 ## Architecture
 
-- `server/main.go` — HTTP server, routing, auth middleware, heartbeat, graceful shutdown (SIGINT/SIGTERM)
-- `server/state.go` — `Store` struct with RWMutex-protected JSON file read/write, timer logic
-- `server/audit.go` — `AuditLog` with buffered writes (5s flush), RWMutex, graceful Flush()
-- `server/static/index.html` — single-page vanilla JS PWA, pull-to-refresh, countdown timers
+- `server/main.go` — HTTP server, routing, auth middleware, heartbeat, script version check, graceful shutdown (SIGINT/SIGTERM)
+- `server/state.go` — `Store` struct with RWMutex-protected JSON file read/write, timer logic, pending timers
+- `server/audit.go` — `AuditLog` with buffered writes (5s flush), RWMutex, graceful Flush(), daily analytics
+- `server/static/index.html` — single-page vanilla JS PWA, pull-to-refresh, countdown timers, bar charts
 - `server/static/manifest.json` + `sw.js` — PWA support
 - `server/static/icon.svg` — MikroTik logo (Simple Icons), used as favicon
 - `server/static/icon-192.svg` — MikroTik logo on blue background, used as PWA/apple-touch-icon
-- `mikrotik/remote-hook.rsc` — RouterOS 7 script, in-memory fetch, conntrack clearing
+- `mikrotik/remote-hook.rsc` — RouterOS 7 script, in-memory fetch, conntrack clearing, sends `X-Script-Version` header
 
 - `entrypoint.sh` — replaces `your-server` placeholder in .rsc with `HOST_IP` env at container startup
-- `Makefile` — `make up/down/logs/restart`, auto-detects host IP via `ip route` (Linux) or `ipconfig` (macOS)
+- `Dockerfile` — multi-stage build (golang → alpine)
+- `.github/workflows/build.yml` — CI: builds Docker image, pushes to ghcr.io on push to master
+- `Makefile` — `make up/down/logs/pull/restart/build-local`, auto-detects host IP via `ip route` (Linux) or `ipconfig` (macOS)
 
 Single `main` package, no internal packages. Static files embedded via `//go:embed`. MikroTik scripts served from disk (`/mikrotik/` in container, copied via Dockerfile).
 
@@ -52,13 +60,15 @@ Single `main` package, no internal packages. Static files embedded via `//go:emb
 - Conntrack clearing: reads `src-address-list` and `dst-address-list` from rule, clears matching connections after successful enable
 - Fetch: `output=user as-value` (in-memory, no disk writes), `duration=10` (10s timeout)
 - Fail-safe: any fetch/parse error → script aborts, no rules changed
+- `scriptVersion` variable — increment on every .rsc change (server compares with router's `X-Script-Version` header)
 
 ## Key Design Decisions
 
-- State stored as JSON file (`data/state.json`), audit log in `data/audit.json` (max 200 entries, buffered 5s)
+- State stored as JSON file (`data/state.json`), audit log in `data/audit.json` (max 2000 entries, buffered 5s)
 - Auth: optional Bearer token via `AUTH_TOKEN` env; applies only to `/api/*` routes
 - UI stores token in localStorage
-- Timer: `TempRelease` sets param + `disabled_until` timestamp; background ticker restores every 10s
+- Timer: `TempRelease` creates pending timer (`timer_duration`); countdown starts only after router fetches state (`disabled_until`). Active timers can be extended.
 - Inverted params (kid-control): `enabled=true` in API → `disabled=yes` on MikroTik
-- `docker compose up` does NOT rebuild — always use `docker compose up --build`
+- Docker image built by GitHub Actions, pushed to `ghcr.io/mogilevich/mikrotik-rule-toggle`
+- `docker compose` uses pre-built image; `make build-local` for local builds
 - Graceful shutdown: SIGINT/SIGTERM → flush audit → stop server
