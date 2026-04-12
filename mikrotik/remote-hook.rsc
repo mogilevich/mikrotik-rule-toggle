@@ -17,7 +17,8 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "1"
+:local scriptVersion "2"
+:local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
 :local content ""
@@ -201,6 +202,33 @@
     } on-error={}
     :if ([:typeof $rulesByName] = "array") do={
         [$processRules rules=$rulesByName section=$section field="name" inverted=$inverted lookupEnabled=$lookupEnabled applyRule=$applyRule content=$content]
+    }
+}
+
+# --- Auto-update script if server signals new version ---
+:local updatePos [:find $content "\"script_update\""]
+:if ([:typeof $updatePos] = "num") do={
+    :local trueCheck [:find $content "true" $updatePos]
+    :if ([:typeof $trueCheck] != "num") do={ :set updatePos nothing }
+}
+:if ([:typeof $updatePos] = "num") do={
+    :log info "remote-hook: server signals script update, downloading new version"
+    # Derive base URL from api/state URL
+    :local baseUrl [:pick $url 0 [:find $url "/api/state"]]
+    :local rscUrl "$baseUrl/mikrotik/remote-hook.rsc"
+    :local newScript ""
+    :do {
+        :set newScript ([/tool/fetch url=$rscUrl output=user as-value duration=10]->"data")
+    } on-error={
+        :log warning "remote-hook: failed to download updated script"
+    }
+    :if ([:len $newScript] > 0) do={
+        :do {
+            /system/script set $scriptName source=$newScript
+            :log info "remote-hook: script updated successfully"
+        } on-error={
+            :log warning "remote-hook: failed to update script source"
+        }
     }
 }
 

@@ -56,6 +56,12 @@ func (h *Heartbeat) Info() heartbeatResponse {
 	}
 }
 
+func (h *Heartbeat) IsScriptOutdated() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.serverVersion != "" && h.routerVersion != h.serverVersion
+}
+
 func main() {
 	listenAddr := envOrDefault("LISTEN_ADDR", ":8080")
 	dataDir := envOrDefault("DATA_DIR", "./data")
@@ -204,12 +210,21 @@ func withAuth(token string, next http.Handler) http.Handler {
 func handleGetState(w http.ResponseWriter, r *http.Request, store *Store, hb *Heartbeat) {
 	// Detect MikroTik fetch by User-Agent
 	ua := r.Header.Get("User-Agent")
-	if strings.Contains(strings.ToLower(ua), "mikrotik") || strings.Contains(strings.ToLower(ua), "routeros") {
+	isMikroTik := strings.Contains(strings.ToLower(ua), "mikrotik") || strings.Contains(strings.ToLower(ua), "routeros")
+	if isMikroTik {
 		hb.Touch(r.Header.Get("X-Script-Version"))
 		store.ActivatePendingTimers()
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(store.GetState())
+	if isMikroTik && hb.IsScriptOutdated() {
+		// Wrap state with update signal for router
+		json.NewEncoder(w).Encode(struct {
+			State
+			ScriptUpdate bool `json:"script_update"`
+		}{store.GetState(), true})
+	} else {
+		json.NewEncoder(w).Encode(store.GetState())
+	}
 }
 
 type setStateReq struct {
