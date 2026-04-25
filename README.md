@@ -5,10 +5,12 @@
 ## Скриншоты
 
 <p align="center">
-  <img src="docs/screenshot-main.png" alt="Основной экран" width="390">
+  <img src="docs/screenshot-main.png" alt="Основной экран" width="320">
+  &nbsp;&nbsp;
+  <img src="docs/screenshot-mobile.png" alt="iPhone, тёмная тема" width="270">
 </p>
 
-Основной экран — переключатели правил, таймер с обратным отсчётом, кнопки продления, статус роутера.
+Основной экран — переключатели правил, таймер с обратным отсчётом, кнопки продления, статус роутера. Поддерживается светлая и тёмная тема.
 
 <p align="center">
   <img src="docs/screenshot-stats.png" alt="Статистика" width="390">

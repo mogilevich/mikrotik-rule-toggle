@@ -748,7 +748,7 @@ async function loadHeartbeat() {
       dotClass = "offline";
       timeText = formatAge(age);
     }
-    const scriptWarn = data.script_outdated ? '<span class="script-warn">⚠</span>' : '';
+    const scriptWarn = data.script_outdated ? '<span class="script-warn" title="Скрипт на роутере устарел — обновите remote-hook.rsc">⚠</span>' : '';
     el.innerHTML = `<div class="router-dot ${dotClass}"></div><span class="router-time">${timeText}</span>${scriptWarn}`;
   } catch(e) {}
 }
