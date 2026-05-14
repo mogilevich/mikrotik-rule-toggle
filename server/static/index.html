@@ -240,6 +240,17 @@
   }
   .timer-row button:active { opacity: .6; }
 
+  .timer-row .time-pick { position: relative; display: inline-flex; flex-shrink: 0; }
+  .timer-row .time-pick input[type="time"] {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    opacity: 0;
+    border: 0; padding: 0; margin: 0;
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
   .timer-row.timer-active { align-items: center; flex-wrap: nowrap; }
   .timer-row.timer-active button.cancel {
     background: rgba(60,60,67,.1);
@@ -638,7 +649,10 @@ function render(params) {
         <button onclick="setTimer('${esc(k)}', 60)">1ч</button>
         <button onclick="setTimer('${esc(k)}', 180)">3ч</button>
         <button onclick="setTimer('${esc(k)}', 360)">6ч</button>
-        <button onclick="pickUntilTime('${esc(k)}')">⏰ до …</button>
+        <span class="time-pick">
+          <button type="button">⏰ до …</button>
+          <input type="time" onchange="setUntilTime('${esc(k)}', this)">
+        </span>
       </div>`;
     }
 
@@ -660,29 +674,19 @@ function render(params) {
   updateCountdowns();
 }
 
-function pickUntilTime(name) {
-  const input = document.createElement("input");
-  input.type = "time";
-  input.style.position = "fixed";
-  input.style.opacity = "0";
-  input.style.pointerEvents = "none";
-  document.body.appendChild(input);
-  const cleanup = () => { if (input.parentNode) document.body.removeChild(input); };
-  input.addEventListener("change", () => {
-    const [h, m] = (input.value || "").split(":").map(Number);
-    cleanup();
-    if (isNaN(h) || isNaN(m)) return;
-    const now = new Date();
-    const target = new Date(now);
-    target.setHours(h, m, 0, 0);
-    if (target <= now) target.setDate(target.getDate() + 1);
-    const mins = Math.round((target - now) / 60000);
-    if (mins < 1) return;
-    setTimer(name, mins);
-  }, { once: true });
-  input.addEventListener("blur", cleanup, { once: true });
-  if (typeof input.showPicker === "function") input.showPicker();
-  else input.click();
+function setUntilTime(name, input) {
+  const value = input.value;
+  input.value = "";
+  if (!value) return;
+  const [h, m] = value.split(":").map(Number);
+  if (isNaN(h) || isNaN(m)) return;
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(h, m, 0, 0);
+  if (target <= now) target.setDate(target.getDate() + 1);
+  const mins = Math.round((target - now) / 60000);
+  if (mins < 1) return;
+  setTimer(name, mins);
 }
 
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
