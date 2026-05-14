@@ -240,17 +240,6 @@
   }
   .timer-row button:active { opacity: .6; }
 
-  .timer-row .time-pick { position: relative; display: inline-flex; flex-shrink: 0; }
-  .timer-row .time-pick input[type="time"] {
-    position: absolute; inset: 0;
-    width: 100%; height: 100%;
-    opacity: 0;
-    border: 0; padding: 0; margin: 0;
-    cursor: pointer;
-    -webkit-appearance: none;
-    appearance: none;
-  }
-
   .timer-row.timer-active { align-items: center; flex-wrap: nowrap; }
   .timer-row.timer-active button.cancel {
     background: rgba(60,60,67,.1);
@@ -649,10 +638,7 @@ function render(params) {
         <button onclick="setTimer('${esc(k)}', 60)">1ч</button>
         <button onclick="setTimer('${esc(k)}', 180)">3ч</button>
         <button onclick="setTimer('${esc(k)}', 360)">6ч</button>
-        <span class="time-pick">
-          <button type="button">⏰ до …</button>
-          <input type="time" onchange="setUntilTime('${esc(k)}', this)">
-        </span>
+        <button type="button" onclick="pickUntilTime('${esc(k)}', this)">⏰ до …</button>
       </div>`;
     }
 
@@ -674,19 +660,55 @@ function render(params) {
   updateCountdowns();
 }
 
-function setUntilTime(name, input) {
-  const value = input.value;
-  input.value = "";
-  if (!value) return;
-  const [h, m] = value.split(":").map(Number);
-  if (isNaN(h) || isNaN(m)) return;
-  const now = new Date();
-  const target = new Date(now);
-  target.setHours(h, m, 0, 0);
-  if (target <= now) target.setDate(target.getDate() + 1);
-  const mins = Math.round((target - now) / 60000);
-  if (mins < 1) return;
-  setTimer(name, mins);
+function pickUntilTime(name, btnEl) {
+  document.querySelectorAll("input[data-until-picker]").forEach(el => el.remove());
+  const rect = btnEl.getBoundingClientRect();
+  const input = document.createElement("input");
+  input.type = "time";
+  input.dataset.untilPicker = "1";
+  Object.assign(input.style, {
+    position: "fixed",
+    left: rect.left + "px",
+    top: rect.top + "px",
+    width: rect.width + "px",
+    height: rect.height + "px",
+    opacity: "0",
+    border: "0",
+    padding: "0",
+    margin: "0",
+    zIndex: "9999",
+  });
+  document.body.appendChild(input);
+  let handled = false;
+  const finish = () => {
+    if (handled) return;
+    handled = true;
+    const value = input.value;
+    if (input.parentNode) input.parentNode.removeChild(input);
+    if (!value) return;
+    const [h, m] = value.split(":").map(Number);
+    if (isNaN(h) || isNaN(m)) return;
+    const now = new Date();
+    const target = new Date(now);
+    target.setHours(h, m, 0, 0);
+    const diffMs = target - now;
+    // Guard: iOS time-picker wheel can auto-commit a value within a minute of "now"
+    // when the user merely touches the wheel. Reject picks too close to current time
+    // — for sub-2-min timers the user should use the 5м button instead.
+    if (Math.abs(diffMs) < 2 * 60 * 1000) return;
+    if (diffMs < 0) target.setDate(target.getDate() + 1);
+    const mins = Math.round((target - now) / 60000);
+    if (mins < 1) return;
+    setTimer(name, mins);
+  };
+  input.addEventListener("change", finish, { once: true });
+  input.addEventListener("blur", () => setTimeout(finish, 300), { once: true });
+  if (typeof input.showPicker === "function") {
+    try { input.showPicker(); } catch (e) { input.focus(); input.click(); }
+  } else {
+    input.focus();
+    input.click();
+  }
 }
 
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
