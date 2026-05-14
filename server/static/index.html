@@ -610,6 +610,13 @@ function render(params) {
       timerRow = `<div class="timer-row timer-active">
         <span class="countdown pending">ожидание роутера…</span>
         <button class="cancel" onclick="cancelTimer('${esc(k)}')">Отмена</button>
+      </div>
+      <div class="timer-row extend-row">
+        <button onclick="setTimer('${esc(k)}', 5)">+5м</button>
+        <button onclick="setTimer('${esc(k)}', 15)">+15м</button>
+        <button onclick="setTimer('${esc(k)}', 30)">+30м</button>
+        <button onclick="setTimer('${esc(k)}', 60)">+1ч</button>
+        <button onclick="setTimer('${esc(k)}', 180)">+3ч</button>
       </div>`;
     } else if (hasTimer) {
       timerRow = `<div class="timer-row timer-active">
@@ -631,8 +638,7 @@ function render(params) {
         <button onclick="setTimer('${esc(k)}', 60)">1ч</button>
         <button onclick="setTimer('${esc(k)}', 180)">3ч</button>
         <button onclick="setTimer('${esc(k)}', 360)">6ч</button>
-        ${untilBtn(k, 20, 'до 20:00')}
-        ${untilBtn(k, 23, 'до 23:00')}
+        <button onclick="pickUntilTime('${esc(k)}')">⏰ до …</button>
       </div>`;
     }
 
@@ -654,14 +660,29 @@ function render(params) {
   updateCountdowns();
 }
 
-function untilBtn(name, hour, label) {
-  const now = new Date();
-  const target = new Date(now);
-  target.setHours(hour, 0, 0, 0);
-  if (target <= now) return "";
-  const mins = Math.round((target - now) / 60000);
-  if (mins < 5) return "";
-  return `<button onclick="setTimer('${esc(name)}', ${mins})">${label}</button>`;
+function pickUntilTime(name) {
+  const input = document.createElement("input");
+  input.type = "time";
+  input.style.position = "fixed";
+  input.style.opacity = "0";
+  input.style.pointerEvents = "none";
+  document.body.appendChild(input);
+  const cleanup = () => { if (input.parentNode) document.body.removeChild(input); };
+  input.addEventListener("change", () => {
+    const [h, m] = (input.value || "").split(":").map(Number);
+    cleanup();
+    if (isNaN(h) || isNaN(m)) return;
+    const now = new Date();
+    const target = new Date(now);
+    target.setHours(h, m, 0, 0);
+    if (target <= now) target.setDate(target.getDate() + 1);
+    const mins = Math.round((target - now) / 60000);
+    if (mins < 1) return;
+    setTimer(name, mins);
+  }, { once: true });
+  input.addEventListener("blur", cleanup, { once: true });
+  if (typeof input.showPicker === "function") input.showPicker();
+  else input.click();
 }
 
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
