@@ -680,11 +680,14 @@ function pickUntilTime(name, btnEl) {
   });
   document.body.appendChild(input);
   let handled = false;
-  const finish = () => {
+  const remove = () => {
     if (handled) return;
     handled = true;
-    const value = input.value;
     if (input.parentNode) input.parentNode.removeChild(input);
+  };
+  input.addEventListener("change", () => {
+    const value = input.value;
+    remove();
     if (!value) return;
     const [h, m] = value.split(":").map(Number);
     if (isNaN(h) || isNaN(m)) return;
@@ -700,9 +703,11 @@ function pickUntilTime(name, btnEl) {
     const mins = Math.round((target - now) / 60000);
     if (mins < 1) return;
     setTimer(name, mins);
-  };
-  input.addEventListener("change", finish, { once: true });
-  input.addEventListener("blur", () => setTimeout(finish, 300), { once: true });
+  }, { once: true });
+  // No blur-based cleanup: on iOS PWA the underlying input loses focus to the
+  // native picker overlay immediately, which would tear down the picker DOM.
+  // Stale inputs are cleaned at the start of the next pickUntilTime call.
+  input.addEventListener("cancel", remove, { once: true });
   if (typeof input.showPicker === "function") {
     try { input.showPicker(); } catch (e) { input.focus(); input.click(); }
   } else {
