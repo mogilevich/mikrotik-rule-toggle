@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
@@ -579,41 +579,41 @@
   <div id="params"></div>
 
   <details class="section" id="log-section">
-    <summary>История</summary>
+    <summary>History</summary>
     <div class="section-body">
       <ul class="log-list" id="log-list"></ul>
     </div>
   </details>
 
   <details class="section" id="stats-section">
-    <summary>Статистика</summary>
+    <summary>Statistics</summary>
     <div class="section-body">
       <div class="stats-tabs" id="stats-tabs">
-        <button onclick="loadStats(1)" data-days="1">1 день</button>
-        <button onclick="loadStats(7)" data-days="7" class="active">7 дней</button>
-        <button onclick="loadStats(30)" data-days="30">30 дней</button>
+        <button onclick="loadStats(1)" data-days="1">1 day</button>
+        <button onclick="loadStats(7)" data-days="7" class="active">7 days</button>
+        <button onclick="loadStats(30)" data-days="30">30 days</button>
       </div>
       <div class="stats-grid" id="stats-grid"></div>
     </div>
   </details>
 
   <details class="section">
-    <summary>Добавить параметр</summary>
+    <summary>Add parameter</summary>
     <div class="section-body add-form">
       <div class="hook-input-wrap">
         <span class="hook-prefix">hook:</span>
         <input type="text" id="new-name" placeholder="block-social" />
       </div>
-      <input type="text" id="new-desc" placeholder="Описание" />
+      <input type="text" id="new-desc" placeholder="Description" />
       <label class="checkbox-label">
-        <input type="checkbox" id="new-inverted" /> Kid-control (инверт. логика)
+        <input type="checkbox" id="new-inverted" /> Kid-control (inverted logic)
       </label>
-      <button onclick="addParam()">Добавить</button>
+      <button onclick="addParam()">Add</button>
     </div>
   </details>
 
   <details class="section">
-    <summary>Токен</summary>
+    <summary>Token</summary>
     <div class="section-body">
       <div id="token-bar">
         <input type="password" id="token" placeholder="Bearer token" />
@@ -623,10 +623,182 @@
   </details>
 </div>
 
+<div id="time-picker-modal" class="modal-overlay" hidden>
+  <div class="modal-card">
+    <div class="modal-title">Until when?</div>
+    <div class="time-selects">
+      <select id="tp-hour" aria-label="Hours"></select>
+      <span>:</span>
+      <select id="tp-minute" aria-label="Minutes"></select>
+    </div>
+    <div id="tp-hint" class="modal-hint"></div>
+    <div class="modal-buttons">
+      <button id="tp-cancel" type="button">Cancel</button>
+      <button id="tp-confirm" type="button" class="primary">Set until</button>
+    </div>
+  </div>
+</div>
+
 <script>
+const T = {
+  en: {
+    section_history: "History",
+    section_stats: "Statistics",
+    section_add: "Add parameter",
+    section_token: "Token",
+    days_1: "1 day",
+    days_7: "7 days",
+    days_30: "30 days",
+    placeholder_desc: "Description",
+    kidcontrol_label: "Kid-control (inverted logic)",
+    btn_add: "Add",
+    err_status: "Error: {0}",
+    err_connect: "Could not connect",
+    empty_params: "No parameters",
+    status_temp_off: "temp. off",
+    status_temp_on: "temp. allowed",
+    status_off: "off",
+    status_blocked: "blocked",
+    status_on: "on",
+    status_allowed: "allowed",
+    toggle_enable: "Enable",
+    toggle_disable: "Disable",
+    toggle_allow: "Allow traffic",
+    toggle_block: "Block traffic",
+    waiting_router: "waiting for router…",
+    btn_cancel: "Cancel",
+    btn_revert: "Revert",
+    minute_short: "m",
+    hour_short: "h",
+    delete_tooltip: "Delete",
+    delete_confirm: "Delete parameter {0}?",
+    until_when: "Until when?",
+    picker_tooltip: "Until when?",
+    hint_until: "until {0} — in {1}",
+    unit_min: "min",
+    unit_h: "h",
+    age_sec: "{0} sec ago",
+    age_min: "{0} min ago",
+    age_h: "{0} h ago",
+    age_d: "{0} d ago",
+    script_outdated: "Router script is outdated — update remote-hook.rsc",
+    log_empty: "Nothing yet",
+    stats_empty: "No data for this period",
+    stats_times: "{0} times",
+    stats_dur_h: "{0}h {1}m",
+    stats_dur_m: "{0} min",
+    chart_title: "{0}: {1} times",
+    pull_release: "↑ Release to refresh",
+    pull_pull: "↓ Pull to refresh",
+    pull_refreshing: "Refreshing...",
+    modal_confirm: "Set until",
+    modal_hour_aria: "Hours",
+    modal_minute_aria: "Minutes",
+    log_toggle_on: "enabled",
+    log_toggle_off: "disabled",
+    log_expired: "timer expired",
+    log_added: "created",
+    log_deleted: "deleted",
+  },
+  ru: {
+    section_history: "История",
+    section_stats: "Статистика",
+    section_add: "Добавить параметр",
+    section_token: "Токен",
+    days_1: "1 день",
+    days_7: "7 дней",
+    days_30: "30 дней",
+    placeholder_desc: "Описание",
+    kidcontrol_label: "Kid-control (инверт. логика)",
+    btn_add: "Добавить",
+    err_status: "Ошибка: {0}",
+    err_connect: "Не удалось подключиться",
+    empty_params: "Нет параметров",
+    status_temp_off: "врем. выключен",
+    status_temp_on: "врем. разрешено",
+    status_off: "выключен",
+    status_blocked: "заблокир.",
+    status_on: "включён",
+    status_allowed: "разрешено",
+    toggle_enable: "Включить",
+    toggle_disable: "Выключить",
+    toggle_allow: "Разрешить трафик",
+    toggle_block: "Заблокировать трафик",
+    waiting_router: "ожидание роутера…",
+    btn_cancel: "Отмена",
+    btn_revert: "Вернуть",
+    minute_short: "м",
+    hour_short: "ч",
+    delete_tooltip: "Удалить",
+    delete_confirm: "Удалить параметр {0}?",
+    until_when: "До какого времени?",
+    picker_tooltip: "До какого времени?",
+    hint_until: "до {0} — через {1}",
+    unit_min: "мин",
+    unit_h: "ч",
+    age_sec: "{0} сек назад",
+    age_min: "{0} мин назад",
+    age_h: "{0} ч назад",
+    age_d: "{0} дн назад",
+    script_outdated: "Скрипт на роутере устарел — обновите remote-hook.rsc",
+    log_empty: "Пока пусто",
+    stats_empty: "Нет данных за этот период",
+    stats_times: "{0} раз",
+    stats_dur_h: "{0}ч {1}м",
+    stats_dur_m: "{0} мин",
+    chart_title: "{0}: {1} раз",
+    pull_release: "↑ Отпустите для обновления",
+    pull_pull: "↓ Потяните для обновления",
+    pull_refreshing: "Обновление...",
+    modal_confirm: "Включить до",
+    modal_hour_aria: "Часы",
+    modal_minute_aria: "Минуты",
+    log_toggle_on: "включён",
+    log_toggle_off: "выключен",
+    log_expired: "таймер истёк",
+    log_added: "создан",
+    log_deleted: "удалён",
+  },
+};
+const LANG = (navigator.language || "en").toLowerCase().startsWith("ru") ? "ru" : "en";
+document.documentElement.lang = LANG;
+function t(key, ...args) {
+  let s = (T[LANG] && T[LANG][key]) != null ? T[LANG][key] : (T.en[key] != null ? T.en[key] : key);
+  args.forEach((v, i) => { s = s.split("{" + i + "}").join(v); });
+  return s;
+}
+
 let authToken = localStorage.getItem("hook-token") || "";
 let currentParams = {};
 document.getElementById("token").value = authToken;
+
+function applyStaticI18n() {
+  document.querySelector("#log-section > summary").textContent = t("section_history");
+  document.querySelector("#stats-section > summary").textContent = t("section_stats");
+  const sections = document.querySelectorAll(".section > summary");
+  // sections: history, stats, add, token (order matches DOM)
+  if (sections[2]) sections[2].textContent = t("section_add");
+  if (sections[3]) sections[3].textContent = t("section_token");
+  const tabs = document.querySelectorAll("#stats-tabs button");
+  if (tabs[0]) tabs[0].textContent = t("days_1");
+  if (tabs[1]) tabs[1].textContent = t("days_7");
+  if (tabs[2]) tabs[2].textContent = t("days_30");
+  const desc = document.getElementById("new-desc");
+  if (desc) desc.placeholder = t("placeholder_desc");
+  const kidLabel = document.querySelector(".checkbox-label");
+  if (kidLabel) {
+    const cb = kidLabel.querySelector("input");
+    kidLabel.textContent = " " + t("kidcontrol_label");
+    kidLabel.insertBefore(cb, kidLabel.firstChild);
+  }
+  const addBtn = document.querySelector(".add-form > button");
+  if (addBtn) addBtn.textContent = t("btn_add");
+  document.querySelector("#time-picker-modal .modal-title").textContent = t("until_when");
+  document.getElementById("tp-hour").setAttribute("aria-label", t("modal_hour_aria"));
+  document.getElementById("tp-minute").setAttribute("aria-label", t("modal_minute_aria"));
+  document.getElementById("tp-cancel").textContent = t("btn_cancel");
+  document.getElementById("tp-confirm").textContent = t("modal_confirm");
+}
 
 function saveToken() {
   authToken = document.getElementById("token").value;
@@ -643,12 +815,12 @@ function headers() {
 async function loadState() {
   try {
     const res = await fetch("/api/state", {headers: headers()});
-    if (!res.ok) { document.getElementById("params").innerHTML = '<div class="empty">Ошибка: ' + res.status + '</div>'; return; }
+    if (!res.ok) { document.getElementById("params").innerHTML = '<div class="empty">' + esc(t("err_status", res.status)) + '</div>'; return; }
     const data = await res.json();
     currentParams = data.params || {};
     render(currentParams);
   } catch (e) {
-    document.getElementById("params").innerHTML = '<div class="empty">Не удалось подключиться</div>';
+    document.getElementById("params").innerHTML = '<div class="empty">' + esc(t("err_connect")) + '</div>';
   }
 }
 
@@ -664,7 +836,7 @@ function formatCountdown(seconds) {
 function render(params) {
   const el = document.getElementById("params");
   const keys = Object.keys(params).sort();
-  if (!keys.length) { el.innerHTML = '<div class="empty">Нет параметров</div>'; return; }
+  if (!keys.length) { el.innerHTML = '<div class="empty">' + esc(t("empty_params")) + '</div>'; return; }
   el.innerHTML = keys.map(k => {
     const p = params[k];
     const inv = p.inverted;
@@ -675,56 +847,58 @@ function render(params) {
     if (hasTimer) {
       stateClass = "timed";
       badgeClass = "timer";
-      badgeText = inv ? "врем. выключен" : "врем. разрешено";
+      badgeText = inv ? t("status_temp_off") : t("status_temp_on");
     } else if (p.enabled) {
       stateClass = inv ? "inactive" : "active";
       badgeClass = inv ? "allowed" : "blocked";
-      badgeText = inv ? "выключен" : "заблокир.";
+      badgeText = inv ? t("status_off") : t("status_blocked");
     } else {
       stateClass = inv ? "active" : "inactive";
       badgeClass = inv ? "blocked" : "allowed";
-      badgeText = inv ? "включён" : "разрешено";
+      badgeText = inv ? t("status_on") : t("status_allowed");
     }
 
     const toggleTitle = inv
-      ? (p.enabled ? "Включить" : "Выключить")
-      : (p.enabled ? "Разрешить трафик" : "Заблокировать трафик");
+      ? (p.enabled ? t("toggle_enable") : t("toggle_disable"))
+      : (p.enabled ? t("toggle_allow") : t("toggle_block"));
 
     const showTimerButtons = inv ? !p.enabled : p.enabled;
 
+    const uM = t("minute_short");
+    const uH = t("hour_short");
     let timerRow = "";
     if (hasPending) {
       timerRow = `<div class="timer-row timer-active">
-        <span class="countdown pending">ожидание роутера…</span>
-        <button class="cancel" onclick="cancelTimer('${esc(k)}')">Отмена</button>
+        <span class="countdown pending">${esc(t("waiting_router"))}</span>
+        <button class="cancel" onclick="cancelTimer('${esc(k)}')">${esc(t("btn_cancel"))}</button>
       </div>
       <div class="timer-row extend-row">
-        <button onclick="setTimer('${esc(k)}', 5)">+5м</button>
-        <button onclick="setTimer('${esc(k)}', 15)">+15м</button>
-        <button onclick="setTimer('${esc(k)}', 30)">+30м</button>
-        <button onclick="setTimer('${esc(k)}', 60)">+1ч</button>
-        <button onclick="setTimer('${esc(k)}', 180)">+3ч</button>
+        <button onclick="setTimer('${esc(k)}', 5)">+5${uM}</button>
+        <button onclick="setTimer('${esc(k)}', 15)">+15${uM}</button>
+        <button onclick="setTimer('${esc(k)}', 30)">+30${uM}</button>
+        <button onclick="setTimer('${esc(k)}', 60)">+1${uH}</button>
+        <button onclick="setTimer('${esc(k)}', 180)">+3${uH}</button>
       </div>`;
     } else if (hasTimer) {
       timerRow = `<div class="timer-row timer-active">
         <span class="countdown" data-until="${p.disabled_until}"></span>
-        <button class="cancel" onclick="cancelTimer('${esc(k)}')">Вернуть</button>
+        <button class="cancel" onclick="cancelTimer('${esc(k)}')">${esc(t("btn_revert"))}</button>
       </div>
       <div class="timer-row extend-row">
-        <button onclick="setTimer('${esc(k)}', 5)">+5м</button>
-        <button onclick="setTimer('${esc(k)}', 15)">+15м</button>
-        <button onclick="setTimer('${esc(k)}', 30)">+30м</button>
-        <button onclick="setTimer('${esc(k)}', 60)">+1ч</button>
-        <button onclick="setTimer('${esc(k)}', 180)">+3ч</button>
+        <button onclick="setTimer('${esc(k)}', 5)">+5${uM}</button>
+        <button onclick="setTimer('${esc(k)}', 15)">+15${uM}</button>
+        <button onclick="setTimer('${esc(k)}', 30)">+30${uM}</button>
+        <button onclick="setTimer('${esc(k)}', 60)">+1${uH}</button>
+        <button onclick="setTimer('${esc(k)}', 180)">+3${uH}</button>
       </div>`;
     } else if (showTimerButtons) {
       timerRow = `<div class="timer-row">
-        <button onclick="setTimer('${esc(k)}', 5)">5м</button>
-        <button onclick="setTimer('${esc(k)}', 15)">15м</button>
-        <button onclick="setTimer('${esc(k)}', 30)">30м</button>
-        <button onclick="setTimer('${esc(k)}', 60)">1ч</button>
-        <button onclick="setTimer('${esc(k)}', 180)">3ч</button>
-        <button type="button" onclick="pickUntilTime('${esc(k)}')" title="До какого времени?">⏰ …</button>
+        <button onclick="setTimer('${esc(k)}', 5)">5${uM}</button>
+        <button onclick="setTimer('${esc(k)}', 15)">15${uM}</button>
+        <button onclick="setTimer('${esc(k)}', 30)">30${uM}</button>
+        <button onclick="setTimer('${esc(k)}', 60)">1${uH}</button>
+        <button onclick="setTimer('${esc(k)}', 180)">3${uH}</button>
+        <button type="button" onclick="pickUntilTime('${esc(k)}')" title="${esc(t("picker_tooltip"))}">⏰ …</button>
       </div>`;
     }
 
@@ -738,7 +912,7 @@ function render(params) {
           <div class="badge-row"><span class="status-badge ${badgeClass}">${badgeText}</span></div>
         </div>
         <label class="toggle" title="${toggleTitle}"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggle('${esc(k)}', this.checked)"><span class="slider"></span></label>
-        <button class="delete-btn" onclick="deleteParam('${esc(k)}')" title="Удалить">&times;</button>
+        <button class="delete-btn" onclick="deleteParam('${esc(k)}')" title="${esc(t("delete_tooltip"))}">&times;</button>
       </div>
       ${timerRow}
     </div>`;
@@ -802,10 +976,10 @@ function updatePickerHint() {
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   let dur;
-  if (h === 0) dur = `${m} мин`;
-  else if (m === 0) dur = `${h} ч`;
-  else dur = `${h} ч ${m} мин`;
-  document.getElementById("tp-hint").textContent = `до ${hh}:${mm} — через ${dur}`;
+  if (h === 0) dur = `${m} ${t("unit_min")}`;
+  else if (m === 0) dur = `${h} ${t("unit_h")}`;
+  else dur = `${h} ${t("unit_h")} ${m} ${t("unit_min")}`;
+  document.getElementById("tp-hint").textContent = t("hint_until", `${hh}:${mm}`, dur);
 }
 
 function closeTimePicker() {
@@ -855,7 +1029,7 @@ async function addParam() {
 }
 
 async function deleteParam(name) {
-  if (!confirm("Удалить параметр " + name + "?")) return;
+  if (!confirm(t("delete_confirm", name))) return;
   const res = await fetch("/api/params?name=" + encodeURIComponent(name), {method: "DELETE", headers: headers()});
   if (res.ok) { const data = await res.json(); currentParams = data.params || {}; render(currentParams); }
 }
@@ -875,10 +1049,10 @@ function updateCountdowns() {
 }
 
 function formatAge(sec) {
-  if (sec < 60) return sec + " сек назад";
-  if (sec < 3600) return Math.floor(sec / 60) + " мин назад";
-  if (sec < 86400) return Math.floor(sec / 3600) + " ч назад";
-  return Math.floor(sec / 86400) + " дн назад";
+  if (sec < 60) return t("age_sec", sec);
+  if (sec < 3600) return t("age_min", Math.floor(sec / 60));
+  if (sec < 86400) return t("age_h", Math.floor(sec / 3600));
+  return t("age_d", Math.floor(sec / 86400));
 }
 
 async function loadHeartbeat() {
@@ -905,9 +1079,32 @@ async function loadHeartbeat() {
       dotClass = "offline";
       timeText = formatAge(age);
     }
-    const scriptWarn = data.script_outdated ? '<span class="script-warn" title="Скрипт на роутере устарел — обновите remote-hook.rsc">⚠</span>' : '';
+    const scriptWarn = data.script_outdated ? '<span class="script-warn" title="' + esc(t("script_outdated")) + '">⚠</span>' : '';
     el.innerHTML = `<div class="router-dot ${dotClass}"></div><span class="router-time">${timeText}</span>${scriptWarn}`;
   } catch(e) {}
+}
+
+function translateLogDetail(detail) {
+  if (LANG === "ru") return detail;
+  const fixed = {
+    "включён": t("log_toggle_on"),
+    "выключен": t("log_toggle_off"),
+    "таймер истёк": t("log_expired"),
+    "создан": t("log_added"),
+    "удалён": t("log_deleted"),
+  };
+  if (fixed[detail]) return fixed[detail];
+  // Timer durations: "на 30 мин", "на 1 ч", "на 1ч 30м", optionally +-prefixed
+  const m = detail.match(/^(\+)?на\s+(.+)$/);
+  if (m) {
+    const prefix = m[1] || "";
+    let rest = m[2]
+      .replace(/(\d+)\s*мин/g, "$1 min")
+      .replace(/(\d+)\s*ч/g, "$1h")
+      .replace(/(\d+)\s*м(?!\p{L})/gu, "$1m");
+    return prefix + rest;
+  }
+  return detail;
 }
 
 async function loadLog() {
@@ -916,11 +1113,11 @@ async function loadLog() {
     if (!res.ok) return;
     const entries = await res.json();
     const el = document.getElementById("log-list");
-    if (!entries || !entries.length) { el.innerHTML = '<li style="color:var(--text3)">Пока пусто</li>'; return; }
+    if (!entries || !entries.length) { el.innerHTML = '<li style="color:var(--text3)">' + esc(t("log_empty")) + '</li>'; return; }
     el.innerHTML = entries.map(e => {
       const d = new Date(e.time * 1000);
-      const t = String(d.getDate()).padStart(2,"0") + "." + String(d.getMonth()+1).padStart(2,"0") + " " + String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0");
-      return `<li><span class="log-time">${t}</span> <span class="log-param">${esc(e.param)}</span> <span class="log-action">${esc(e.detail)}</span></li>`;
+      const timeStr = String(d.getDate()).padStart(2,"0") + "." + String(d.getMonth()+1).padStart(2,"0") + " " + String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0");
+      return `<li><span class="log-time">${timeStr}</span> <span class="log-param">${esc(e.param)}</span> <span class="log-action">${esc(translateLogDetail(e.detail))}</span></li>`;
     }).join("");
   } catch(e) {}
 }
@@ -938,20 +1135,20 @@ async function loadStats(days) {
     const data = await res.json();
     const el = document.getElementById("stats-grid");
     const params = Object.keys(data.by_param || {}).sort();
-    if (!params.length) { el.innerHTML = '<div class="chart-empty">Нет данных за этот период</div>'; return; }
+    if (!params.length) { el.innerHTML = '<div class="chart-empty">' + esc(t("stats_empty")) + '</div>'; return; }
     el.innerHTML = params.map(k => {
       const p = data.by_param[k];
       const days = p.days || [];
       const maxCount = Math.max(...days.map(d => d.count), 1);
       const totalH = Math.floor(p.total_minutes / 60);
       const totalM = p.total_minutes % 60;
-      const timeStr = totalH > 0 ? totalH + "ч " + totalM + "м" : totalM + " мин";
+      const timeStr = totalH > 0 ? t("stats_dur_h", totalH, totalM) : t("stats_dur_m", totalM);
 
       const barsHtml = days.map(d => {
         const h = d.count > 0 ? Math.max(8, Math.round((d.count / maxCount) * 56)) : 0;
         const cls = d.count > 0 ? "chart-bar" : "chart-bar zero";
-        const title = formatDateShort(d.date) + ": " + d.count + " раз";
-        return `<div class="chart-bar-wrap"><div class="${cls}" style="height:${h}px" title="${title}"></div></div>`;
+        const title = t("chart_title", formatDateShort(d.date), d.count);
+        return `<div class="chart-bar-wrap"><div class="${cls}" style="height:${h}px" title="${esc(title)}"></div></div>`;
       }).join("");
 
       const labelsHtml = days.map((d, i) => {
@@ -962,7 +1159,7 @@ async function loadStats(days) {
       return `<div class="chart-card">
         <div class="chart-header">
           <span class="chart-name">${esc(k)}</span>
-          <span class="chart-summary">${p.total_timers} раз · ${timeStr}</span>
+          <span class="chart-summary">${esc(t("stats_times", p.total_timers))} · ${esc(timeStr)}</span>
         </div>
         <div class="chart-bars">${barsHtml}</div>
         <div class="chart-labels">${labelsHtml}</div>
@@ -987,6 +1184,7 @@ setInterval(updateCountdowns, 1000);
 setInterval(loadState, 30000);
 setInterval(loadHeartbeat, 10000);
 
+applyStaticI18n();
 loadState();
 loadHeartbeat();
 
@@ -1023,11 +1221,11 @@ if ("serviceWorker" in navigator) {
       indicator.style.opacity = "1";
       indicator.style.lineHeight = h + "px";
       if (dy > 80) {
-        indicator.textContent = "↑ Отпустите для обновления";
+        indicator.textContent = t("pull_release");
         indicator.style.color = "var(--blue)";
         indicator.style.fontWeight = "600";
       } else {
-        indicator.textContent = "↓ Потяните для обновления";
+        indicator.textContent = t("pull_pull");
         indicator.style.color = "var(--text3)";
         indicator.style.fontWeight = "400";
       }
@@ -1039,7 +1237,7 @@ if ("serviceWorker" in navigator) {
     pulling = false;
     if (dy > 80) {
       refreshing = true;
-      indicator.textContent = "Обновление...";
+      indicator.textContent = t("pull_refreshing");
       indicator.style.height = "36px";
       indicator.style.opacity = "1";
       indicator.style.lineHeight = "36px";
@@ -1064,21 +1262,5 @@ if ("serviceWorker" in navigator) {
   }, {passive: true});
 })();
 </script>
-
-<div id="time-picker-modal" class="modal-overlay" hidden>
-  <div class="modal-card">
-    <div class="modal-title">До какого времени?</div>
-    <div class="time-selects">
-      <select id="tp-hour" aria-label="Часы"></select>
-      <span>:</span>
-      <select id="tp-minute" aria-label="Минуты"></select>
-    </div>
-    <div id="tp-hint" class="modal-hint"></div>
-    <div class="modal-buttons">
-      <button id="tp-cancel" type="button">Отмена</button>
-      <button id="tp-confirm" type="button" class="primary">Включить до</button>
-    </div>
-  </div>
-</div>
 </body>
 </html>
