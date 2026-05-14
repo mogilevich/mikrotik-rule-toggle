@@ -477,6 +477,93 @@
   .chart-labels { display: flex; gap: 2px; margin-top: 4px; }
   .chart-labels span { flex: 1; text-align: center; font-size: 10px; color: var(--text3); overflow: hidden; }
   .chart-empty { text-align: center; color: var(--text3); font-size: 14px; padding: 20px 0; }
+
+  /* Time picker modal */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+  }
+  .modal-overlay[hidden] { display: none; }
+  .modal-card {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 20px;
+    width: 100%;
+    max-width: 320px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.3);
+  }
+  .modal-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text1);
+    text-align: center;
+    margin-bottom: 16px;
+  }
+  .time-selects {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .time-selects select {
+    font-size: 28px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    background: var(--bg);
+    color: var(--text1);
+    border: 1.5px solid var(--sep);
+    border-radius: 10px;
+    padding: 10px 14px;
+    text-align: center;
+    text-align-last: center;
+    font-family: -apple-system, sans-serif;
+    -webkit-appearance: none;
+    appearance: none;
+    min-width: 86px;
+  }
+  .time-selects select:focus { outline: none; border-color: var(--blue); }
+  .time-selects span {
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--text2);
+  }
+  .modal-hint {
+    text-align: center;
+    font-size: 14px;
+    color: var(--text2);
+    margin-bottom: 18px;
+    min-height: 18px;
+  }
+  .modal-buttons {
+    display: flex;
+    gap: 8px;
+  }
+  .modal-buttons button {
+    flex: 1;
+    padding: 12px 16px;
+    border-radius: 10px;
+    border: none;
+    font-size: 15px;
+    font-weight: 600;
+    font-family: -apple-system, sans-serif;
+    cursor: pointer;
+    background: rgba(60,60,67,.1);
+    color: var(--text1);
+  }
+  .modal-buttons button.primary {
+    background: var(--blue);
+    color: #fff;
+  }
+  .modal-buttons button:active { opacity: .7; }
 </style>
 </head>
 <body>
@@ -638,7 +725,7 @@ function render(params) {
         <button onclick="setTimer('${esc(k)}', 60)">1ч</button>
         <button onclick="setTimer('${esc(k)}', 180)">3ч</button>
         <button onclick="setTimer('${esc(k)}', 360)">6ч</button>
-        <button type="button" onclick="pickUntilTime('${esc(k)}', this)">⏰ до …</button>
+        <button type="button" onclick="pickUntilTime('${esc(k)}')">⏰ до …</button>
       </div>`;
     }
 
@@ -660,60 +747,79 @@ function render(params) {
   updateCountdowns();
 }
 
-function pickUntilTime(name, btnEl) {
-  document.querySelectorAll("input[data-until-picker]").forEach(el => el.remove());
-  const rect = btnEl.getBoundingClientRect();
-  const input = document.createElement("input");
-  input.type = "time";
-  input.dataset.untilPicker = "1";
-  Object.assign(input.style, {
-    position: "fixed",
-    left: rect.left + "px",
-    top: rect.top + "px",
-    width: rect.width + "px",
-    height: rect.height + "px",
-    opacity: "0",
-    border: "0",
-    padding: "0",
-    margin: "0",
-    zIndex: "9999",
-  });
-  document.body.appendChild(input);
-  let handled = false;
-  const remove = () => {
-    if (handled) return;
-    handled = true;
-    if (input.parentNode) input.parentNode.removeChild(input);
-  };
-  input.addEventListener("change", () => {
-    const value = input.value;
-    remove();
-    if (!value) return;
-    const [h, m] = value.split(":").map(Number);
-    if (isNaN(h) || isNaN(m)) return;
-    const now = new Date();
-    const target = new Date(now);
-    target.setHours(h, m, 0, 0);
-    const diffMs = target - now;
-    // Guard: iOS time-picker wheel can auto-commit a value within a minute of "now"
-    // when the user merely touches the wheel. Reject picks too close to current time
-    // — for sub-2-min timers the user should use the 5м button instead.
-    if (Math.abs(diffMs) < 2 * 60 * 1000) return;
-    if (diffMs < 0) target.setDate(target.getDate() + 1);
-    const mins = Math.round((target - now) / 60000);
-    if (mins < 1) return;
-    setTimer(name, mins);
-  }, { once: true });
-  // No blur-based cleanup: on iOS PWA the underlying input loses focus to the
-  // native picker overlay immediately, which would tear down the picker DOM.
-  // Stale inputs are cleaned at the start of the next pickUntilTime call.
-  input.addEventListener("cancel", remove, { once: true });
-  if (typeof input.showPicker === "function") {
-    try { input.showPicker(); } catch (e) { input.focus(); input.click(); }
-  } else {
-    input.focus();
-    input.click();
+const pickerState = { name: null, initialized: false };
+
+function pickUntilTime(name) {
+  const modal = document.getElementById("time-picker-modal");
+  const hourSel = document.getElementById("tp-hour");
+  const minSel = document.getElementById("tp-minute");
+
+  if (!pickerState.initialized) {
+    hourSel.innerHTML = Array.from({length: 24}, (_, i) => {
+      const v = String(i).padStart(2, "0");
+      return `<option value="${i}">${v}</option>`;
+    }).join("");
+    minSel.innerHTML = Array.from({length: 12}, (_, i) => {
+      const v = String(i * 5).padStart(2, "0");
+      return `<option value="${i * 5}">${v}</option>`;
+    }).join("");
+    hourSel.addEventListener("change", updatePickerHint);
+    minSel.addEventListener("change", updatePickerHint);
+    document.getElementById("tp-cancel").addEventListener("click", closeTimePicker);
+    document.getElementById("tp-confirm").addEventListener("click", confirmTimePicker);
+    modal.addEventListener("click", (e) => { if (e.target === modal) closeTimePicker(); });
+    document.addEventListener("keydown", (e) => {
+      if (modal.hidden) return;
+      if (e.key === "Escape") { e.preventDefault(); closeTimePicker(); }
+      else if (e.key === "Enter") { e.preventDefault(); confirmTimePicker(); }
+    });
+    pickerState.initialized = true;
   }
+
+  pickerState.name = name;
+  const now = new Date();
+  const def = new Date(now.getTime() + 60 * 60 * 1000);
+  hourSel.value = String(def.getHours());
+  const roundedMin = Math.floor(def.getMinutes() / 5) * 5;
+  minSel.value = String(roundedMin);
+  updatePickerHint();
+  modal.hidden = false;
+}
+
+function pickerTargetMinutes() {
+  const h = Number(document.getElementById("tp-hour").value);
+  const m = Number(document.getElementById("tp-minute").value);
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(h, m, 0, 0);
+  if (target <= now) target.setDate(target.getDate() + 1);
+  return { mins: Math.round((target - now) / 60000), target };
+}
+
+function updatePickerHint() {
+  const { mins, target } = pickerTargetMinutes();
+  const hh = String(target.getHours()).padStart(2, "0");
+  const mm = String(target.getMinutes()).padStart(2, "0");
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  let dur;
+  if (h === 0) dur = `${m} мин`;
+  else if (m === 0) dur = `${h} ч`;
+  else dur = `${h} ч ${m} мин`;
+  document.getElementById("tp-hint").textContent = `до ${hh}:${mm} — через ${dur}`;
+}
+
+function closeTimePicker() {
+  document.getElementById("time-picker-modal").hidden = true;
+  pickerState.name = null;
+}
+
+function confirmTimePicker() {
+  const name = pickerState.name;
+  if (!name) { closeTimePicker(); return; }
+  const { mins } = pickerTargetMinutes();
+  closeTimePicker();
+  if (mins >= 1) setTimer(name, mins);
 }
 
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
@@ -959,5 +1065,21 @@ if ("serviceWorker" in navigator) {
   }, {passive: true});
 })();
 </script>
+
+<div id="time-picker-modal" class="modal-overlay" hidden>
+  <div class="modal-card">
+    <div class="modal-title">До какого времени?</div>
+    <div class="time-selects">
+      <select id="tp-hour" aria-label="Часы"></select>
+      <span>:</span>
+      <select id="tp-minute" aria-label="Минуты"></select>
+    </div>
+    <div id="tp-hint" class="modal-hint"></div>
+    <div class="modal-buttons">
+      <button id="tp-cancel" type="button">Отмена</button>
+      <button id="tp-confirm" type="button" class="primary">Включить до</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
