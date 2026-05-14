@@ -213,7 +213,7 @@
   /* Timer rows */
   .timer-row {
     display: flex;
-    gap: 6px;
+    gap: 5px;
     margin-top: 12px;
     padding-top: 12px;
     border-top: 1px solid var(--sep);
@@ -228,7 +228,7 @@
     background: rgba(255,149,0,.12);
     color: var(--orange);
     border: none;
-    padding: 0 14px;
+    padding: 0 11px;
     height: 34px;
     border-radius: 17px;
     cursor: pointer;
@@ -724,8 +724,7 @@ function render(params) {
         <button onclick="setTimer('${esc(k)}', 30)">30м</button>
         <button onclick="setTimer('${esc(k)}', 60)">1ч</button>
         <button onclick="setTimer('${esc(k)}', 180)">3ч</button>
-        <button onclick="setTimer('${esc(k)}', 360)">6ч</button>
-        <button type="button" onclick="pickUntilTime('${esc(k)}')">⏰ до …</button>
+        <button type="button" onclick="pickUntilTime('${esc(k)}')" title="До какого времени?">⏰ …</button>
       </div>`;
     }
 
