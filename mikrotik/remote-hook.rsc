@@ -17,12 +17,20 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "12"
+:local scriptVersion "13"
 
 # Set by applyRule when a /ip/dns/static entry actually changes state.
 # Used after the main scan to flush DNS cache at most once per cycle.
 :global remoteHookDnsFlushNeeded
 :set remoteHookDnsFlushNeeded false
+
+# Accumulator of upstream-resolved IPs collected from /ip/dns/cache when
+# DNS-static rules go from disabled to enabled. Comma-delimited string
+# (",1.2.3.4,5.6.7.8,") seeded with a leading comma so substring lookup
+# of ",IP," gives a clean dedup. After the main scan we walk this list
+# and drop matching conntrack entries.
+:global remoteHookDnsKillIps
+:set remoteHookDnsKillIps ","
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -156,6 +164,28 @@
             :if ($enableOk && [:find $section "dns"] != nothing) do={
                 :global remoteHookDnsFlushNeeded
                 :set remoteHookDnsFlushNeeded true
+
+                # Snapshot upstream-resolved IPs for this rule's domain so we
+                # can drop live conntrack after the main scan. The static
+                # record we just enabled overrides future lookups, but cache
+                # entries from earlier upstream resolutions are still there.
+                :global remoteHookDnsKillIps
+                :local ruleDomain ""
+                :do {
+                    :set ruleDomain [[:parse ":return [$section get $ruleId name]"]]
+                } on-error={}
+                :if ([:typeof $ruleDomain] = "str" && [:len $ruleDomain] > 0) do={
+                    :foreach c in=[/ip/dns/cache find where name~"$ruleDomain"] do={
+                        :do {
+                            :local cacheAddr [/ip/dns/cache get $c address]
+                            :if ([:typeof $cacheAddr] = "str" && [:len $cacheAddr] > 0 && $cacheAddr != "127.0.0.1" && $cacheAddr != "::1") do={
+                                :if ([:typeof [:find $remoteHookDnsKillIps ",$cacheAddr,"]] != "num") do={
+                                    :set remoteHookDnsKillIps ($remoteHookDnsKillIps . "$cacheAddr,")
+                                }
+                            }
+                        } on-error={}
+                    }
+                }
             }
 
             # Clear connection tracking only if rule was successfully enabled
@@ -354,6 +384,37 @@
     } on-error={}
     :if ([:typeof $rulesByName] = "array") do={
         [$processRules rules=$rulesByName section=$section field="name" inverted=$inverted lookupEnabled=$lookupEnabled applyRule=$applyRule content=$content]
+    }
+}
+
+# --- Kill live connections to IPs snapshotted from dns/cache before flush ---
+# Walk the comma-delimited accumulator and drop every conntrack entry whose
+# dst-address (stored as "IP:port") starts with each collected IP. Runs once
+# per cycle, regardless of how many DNS-static rules were enabled.
+:if ([:len $remoteHookDnsKillIps] > 1) do={
+    :local totalKilled 0
+    :local distinctIps 0
+    :local acc $remoteHookDnsKillIps
+    # Strip leading bookend comma, then walk by splitting on the next comma.
+    :if ([:pick $acc 0 1] = ",") do={ :set acc [:pick $acc 1 [:len $acc]] }
+    :local nextComma [:find $acc ","]
+    :while ([:typeof $nextComma] = "num") do={
+        :local ip [:pick $acc 0 $nextComma]
+        :if ([:len $ip] > 0) do={
+            :set distinctIps ($distinctIps + 1)
+            :do {
+                :local connIds [/ip/firewall/connection find where dst-address~"^$ip:"]
+                :if ([:len $connIds] > 0) do={
+                    :do { /ip/firewall/connection remove $connIds } on-error={}
+                    :set totalKilled ($totalKilled + [:len $connIds])
+                }
+            } on-error={}
+        }
+        :set acc [:pick $acc ($nextComma + 1) [:len $acc]]
+        :set nextComma [:find $acc ","]
+    }
+    :if ($totalKilled > 0) do={
+        :log info "remote-hook: killed $totalKilled connections to $distinctIps dns-blocked IPs"
     }
 }
 
