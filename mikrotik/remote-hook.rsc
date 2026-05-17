@@ -17,7 +17,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "13"
+:local scriptVersion "14"
 
 # Set by applyRule when a /ip/dns/static entry actually changes state.
 # Used after the main scan to flush DNS cache at most once per cycle.
@@ -387,15 +387,20 @@
     }
 }
 
-# --- Kill live connections to IPs snapshotted from dns/cache before flush ---
-# Walk the comma-delimited accumulator and drop every conntrack entry whose
-# dst-address (stored as "IP:port") starts with each collected IP. Runs once
-# per cycle, regardless of how many DNS-static rules were enabled.
+# --- Temp-block + kill connections for clients talking to dns-blocked IPs ---
+# Walk dst-IPs collected from /ip/dns/cache during the main scan. For every
+# conntrack entry going to one of those IPs, extract the client src IP, add
+# it to the _temp-block address-list for 30s, then nuke every connection
+# originating from that client. This mirrors the firewall temp-block flow
+# (see applyRule, lines 243-265) and applies once per cycle.
 :if ([:len $remoteHookDnsKillIps] > 1) do={
     :local totalKilled 0
     :local distinctIps 0
+    :local distinctSrcs 0
+    :local seenSrcs ","
+    :local tempBlockReady false
+
     :local acc $remoteHookDnsKillIps
-    # Strip leading bookend comma, then walk by splitting on the next comma.
     :if ([:pick $acc 0 1] = ",") do={ :set acc [:pick $acc 1 [:len $acc]] }
     :local nextComma [:find $acc ","]
     :while ([:typeof $nextComma] = "num") do={
@@ -403,18 +408,57 @@
         :if ([:len $ip] > 0) do={
             :set distinctIps ($distinctIps + 1)
             :do {
-                :local connIds [/ip/firewall/connection find where dst-address~"^$ip:"]
-                :if ([:len $connIds] > 0) do={
-                    :do { /ip/firewall/connection remove $connIds } on-error={}
-                    :set totalKilled ($totalKilled + [:len $connIds])
+                :foreach cId in=[/ip/firewall/connection find where dst-address~"^$ip:"] do={
+                    :do {
+                        :local srcRaw [/ip/firewall/connection get $cId src-address]
+                        :local srcIp $srcRaw
+                        :local colonPos [:find $srcRaw ":"]
+                        :if ([:typeof $colonPos] = "num") do={
+                            :set srcIp [:pick $srcRaw 0 $colonPos]
+                        }
+                        :if ([:len $srcIp] > 0 && [:typeof [:find $seenSrcs ",$srcIp,"]] != "num") do={
+                            :set seenSrcs ($seenSrcs . "$srcIp,")
+                            :set distinctSrcs ($distinctSrcs + 1)
+
+                            # On first new client: ensure the _temp-block drop
+                            # rule exists in forward chain above established.
+                            :if (!$tempBlockReady) do={
+                                :local tbRule [/ip/firewall/filter find comment="hook:_temp-block"]
+                                :local estRule [/ip/firewall/filter find where chain=forward connection-state~"established"]
+                                :if ([:len $tbRule] = 0) do={
+                                    :if ([:len $estRule] > 0) do={
+                                        /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=($estRule->0)
+                                    } else={
+                                        /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=0
+                                    }
+                                    :log info "remote-hook: created _temp-block drop rule (dns block)"
+                                } else={
+                                    :if ([:len $estRule] > 0) do={
+                                        :do { /ip/firewall/filter move ($tbRule->0) ($estRule->0) } on-error={}
+                                    }
+                                }
+                                :set tempBlockReady true
+                            }
+
+                            # Temp-block this client for 30s and kill all its conns.
+                            :do {
+                                /ip/firewall/address-list add list=_temp-block address=$srcIp timeout=30s
+                            } on-error={}
+                            :local allConns [/ip/firewall/connection find where src-address~"^$srcIp:"]
+                            :if ([:len $allConns] > 0) do={
+                                :do { /ip/firewall/connection remove $allConns } on-error={}
+                                :set totalKilled ($totalKilled + [:len $allConns])
+                            }
+                        }
+                    } on-error={}
                 }
             } on-error={}
         }
         :set acc [:pick $acc ($nextComma + 1) [:len $acc]]
         :set nextComma [:find $acc ","]
     }
-    :if ($totalKilled > 0) do={
-        :log info "remote-hook: killed $totalKilled connections to $distinctIps dns-blocked IPs"
+    :if ($distinctSrcs > 0) do={
+        :log info "remote-hook: killed $totalKilled conns from $distinctSrcs devices for $distinctIps dns-blocked IPs (30s temp-block)"
     }
 }
 
