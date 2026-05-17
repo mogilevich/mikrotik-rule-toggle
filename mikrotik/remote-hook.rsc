@@ -17,7 +17,12 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "11"
+:local scriptVersion "12"
+
+# Set by applyRule when a /ip/dns/static entry actually changes state.
+# Used after the main scan to flush DNS cache at most once per cycle.
+:global remoteHookDnsFlushNeeded
+:set remoteHookDnsFlushNeeded false
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -148,6 +153,11 @@
                 :log warning "remote-hook: failed to enable $paramName in $section"
             }
 
+            :if ($enableOk && [:find $section "dns"] != nothing) do={
+                :global remoteHookDnsFlushNeeded
+                :set remoteHookDnsFlushNeeded true
+            }
+
             # Clear connection tracking only if rule was successfully enabled
             :if ($enableOk && [:find $section "firewall"] != nothing) do={
                 :local totalCleared 0
@@ -248,11 +258,17 @@
             :set currentDisabled [[:parse ":return [$section get $ruleId disabled]"]]
         } on-error={}
         :if ($currentDisabled = false) do={
+            :local disableOk false
             :do {
                 [[:parse "$section set $ruleId disabled=yes"]]
+                :set disableOk true
                 :log info "remote-hook: disabled $paramName in $section"
             } on-error={
                 :log warning "remote-hook: failed to disable $paramName in $section"
+            }
+            :if ($disableOk && [:find $section "dns"] != nothing) do={
+                :global remoteHookDnsFlushNeeded
+                :set remoteHookDnsFlushNeeded true
             }
         }
     }
@@ -265,7 +281,8 @@
     "/ip/firewall/filter";
     "/ip/firewall/nat";
     "/ip/firewall/mangle";
-    "/ip/kid-control"
+    "/ip/kid-control";
+    "/ip/dns/static"
 }
 
 # Sections with inverted logic (kid-control: disabling rule = removing restrictions)
@@ -337,6 +354,16 @@
     } on-error={}
     :if ([:typeof $rulesByName] = "array") do={
         [$processRules rules=$rulesByName section=$section field="name" inverted=$inverted lookupEnabled=$lookupEnabled applyRule=$applyRule content=$content]
+    }
+}
+
+# --- Flush DNS cache once if any /ip/dns/static entry changed ---
+:if ($remoteHookDnsFlushNeeded = true) do={
+    :do {
+        /ip/dns/cache/flush
+        :log info "remote-hook: flushed DNS cache after dns/static toggle"
+    } on-error={
+        :log warning "remote-hook: failed to flush DNS cache"
     }
 }
 
