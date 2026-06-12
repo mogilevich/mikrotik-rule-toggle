@@ -13,24 +13,25 @@
 # Kid-control:      set name to "hook:<param-name>"     (enabled=true → rule disabled → child unrestricted)
 #                   Kid-control has INVERTED logic: disabling the kid-control rule
 #                   removes schedule restrictions, giving the child full access.
+# DNS static:       set comment to "hook:<param-name>"  (enabled=true → entry active)
+#
+# Domain blocking convention — one hook:<name> toggles a PAIR of rules:
+#   1. /ip/dns/static add name=example.com type=NXDOMAIN match-subdomain=yes comment="hook:<name>"
+#      (clients using router DNS stop resolving the domain; cache is flushed on toggle)
+#   2. /ip/firewall/filter add chain=forward dst-address-list=<list> action=drop comment="hook:<name>"
+#      where the address-list holds FQDN entries (/ip/firewall/address-list add list=<list> address=example.com)
+#      — RouterOS resolves FQDNs dynamically, the existing firewall flow below
+#      handles conntrack clearing + 30s temp-block of affected clients.
 
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "14"
+:local scriptVersion "15"
 
 # Set by applyRule when a /ip/dns/static entry actually changes state.
 # Used after the main scan to flush DNS cache at most once per cycle.
 :global remoteHookDnsFlushNeeded
 :set remoteHookDnsFlushNeeded false
-
-# Accumulator of upstream-resolved IPs collected from /ip/dns/cache when
-# DNS-static rules go from disabled to enabled. Comma-delimited string
-# (",1.2.3.4,5.6.7.8,") seeded with a leading comma so substring lookup
-# of ",IP," gives a clean dedup. After the main scan we walk this list
-# and drop matching conntrack entries.
-:global remoteHookDnsKillIps
-:set remoteHookDnsKillIps ","
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
@@ -75,13 +76,80 @@
     :return false
 }
 
+# --- Helper: find conntrack entries where src/dst matches addr ---
+# field: "src" or "dst". Plain IPs match exactly; CIDRs match by a regex
+# prefix of the full octets covered by the mask, dots escaped
+# ("172.16.0.0/16" -> "^172\.16\."). Non-octet-aligned masks round down to
+# the nearest octet (slight over-match, acceptable for connection clearing).
+:local findConns do={
+    :local slashPos [:find $addr "/"]
+    :if ([:typeof $slashPos] != "num") do={
+        :if ($field = "src") do={
+            :return [/ip/firewall/connection find src-address=$addr]
+        }
+        :return [/ip/firewall/connection find dst-address=$addr]
+    }
+    :local net [:pick $addr 0 $slashPos]
+    :local mask [:tonum [:pick $addr ($slashPos + 1) [:len $addr]]]
+    :local octets ($mask / 8)
+    :if ($octets < 1) do={ :set octets 1 }
+    :if ($octets > 4) do={ :set octets 4 }
+    :local rx "^"
+    :local rest $net
+    :local i 0
+    :while ($i < $octets) do={
+        :local dotPos [:find $rest "."]
+        :local part $rest
+        :if ([:typeof $dotPos] = "num") do={
+            :set part [:pick $rest 0 $dotPos]
+            :set rest [:pick $rest ($dotPos + 1) [:len $rest]]
+        }
+        :if ($i > 0) do={ :set rx ($rx . "\\.") }
+        :set rx ($rx . $part)
+        :set i ($i + 1)
+    }
+    :if ($octets < 4) do={
+        :set rx ($rx . "\\.")
+    } else={
+        # full IP: stop before the port (or end of string for ICMP)
+        :set rx ($rx . "(:|\$)")
+    }
+    :if ($field = "src") do={
+        :return [/ip/firewall/connection find src-address~"$rx"]
+    }
+    :return [/ip/firewall/connection find dst-address~"$rx"]
+}
+
+# --- Helper: remove conntrack entries matching an address-list ---
+# field: "src" or "dst". Returns the number of removed connections.
+:local clearListConns do={
+    :local total 0
+    :foreach addrId in=[/ip/firewall/address-list find list=$list] do={
+        :local addr [/ip/firewall/address-list get $addrId address]
+        :local connIds [$findConns addr=$addr field=$field]
+        :if ([:len $connIds] > 0) do={
+            :do { /ip/firewall/connection remove $connIds } on-error={}
+            :set total ($total + [:len $connIds])
+        }
+    }
+    :return $total
+}
+
+# --- Helper: append item to array unless already present ---
+:local appendUnique do={
+    :foreach a in=$arr do={
+        :if ($a = $item) do={ :return $arr }
+    }
+    :return ($arr , $item)
+}
+
 # --- Helper: apply enable/disable to a rule ---
 :local applyRule do={
+    :local currentDisabled
+    :do {
+        :set currentDisabled [[:parse ":return [$section get $ruleId disabled]"]]
+    } on-error={}
     :if ($shouldEnable = true) do={
-        :local currentDisabled
-        :do {
-            :set currentDisabled [[:parse ":return [$section get $ruleId disabled]"]]
-        } on-error={}
         :if ($currentDisabled = true) do={
             # Pre-collect src IPs for temp-block BEFORE enabling the rule
             :local srcList ""
@@ -101,16 +169,11 @@
 
                 # Priority 1: src-address-list → resolve to IPs
                 :if ($hasSrcList) do={
-                    :local addrIds [/ip/firewall/address-list find list=$srcList]
-                    :foreach addrId in=$addrIds do={
+                    :foreach addrId in=[/ip/firewall/address-list find list=$srcList] do={
                         :local addr [/ip/firewall/address-list get $addrId address]
                         :local slashPos [:find $addr "/"]
                         :if ([:typeof $slashPos] = "num") do={ :set addr [:pick $addr 0 $slashPos] }
-                        :local found false
-                        :foreach a in=$preCollectedSrc do={
-                            :if ($a = $addr) do={ :set found true }
-                        }
-                        :if (!$found) do={ :set preCollectedSrc ($preCollectedSrc , $addr) }
+                        :set preCollectedSrc [$appendUnique arr=$preCollectedSrc item=$addr]
                     }
                 }
                 # Priority 2: src-address → use directly
@@ -122,29 +185,17 @@
                 }
                 # Priority 3: no src info → scan conntrack by dst-address-list
                 :if (!$hasSrcList && !$hasSrcAddr && $hasDstList) do={
-                    :local addrIds [/ip/firewall/address-list find list=$dstList]
-                    :foreach addrId in=$addrIds do={
+                    :foreach addrId in=[/ip/firewall/address-list find list=$dstList] do={
                         :local addr [/ip/firewall/address-list get $addrId address]
-                        :local isCidr false
-                        :local slashPos [:find $addr "/"]
-                        :if ([:typeof $slashPos] = "num") do={
-                            :set addr [:pick $addr 0 $slashPos]
-                            :set isCidr true
-                        }
-                        :local connIds
-                        :if ($isCidr) do={
-                            :set connIds [/ip/firewall/connection find dst-address~"^$addr"]
-                        } else={
-                            :set connIds [/ip/firewall/connection find dst-address=$addr]
-                        }
-                        :foreach connId in=$connIds do={
+                        :foreach connId in=[$findConns addr=$addr field="dst"] do={
                             :do {
-                                :local srcIp [/ip/firewall/connection get $connId src-address]
-                                :local found false
-                                :foreach a in=$preCollectedSrc do={
-                                    :if ($a = $srcIp) do={ :set found true }
+                                :local srcIp [:tostr [/ip/firewall/connection get $connId src-address]]
+                                # conntrack address may carry ":port" — keep the IP only
+                                :local colonPos [:find $srcIp ":"]
+                                :if ([:typeof $colonPos] = "num") do={ :set srcIp [:pick $srcIp 0 $colonPos] }
+                                :if ([:len $srcIp] > 0) do={
+                                    :set preCollectedSrc [$appendUnique arr=$preCollectedSrc item=$srcIp]
                                 }
-                                :if (!$found) do={ :set preCollectedSrc ($preCollectedSrc , $srcIp) }
                             } on-error={}
                         }
                     }
@@ -164,83 +215,21 @@
             :if ($enableOk && [:find $section "dns"] != nothing) do={
                 :global remoteHookDnsFlushNeeded
                 :set remoteHookDnsFlushNeeded true
-
-                # Snapshot upstream-resolved IPs for this rule's domain so we
-                # can drop live conntrack after the main scan. The static
-                # record we just enabled overrides future lookups, but cache
-                # entries from earlier upstream resolutions are still there.
-                :global remoteHookDnsKillIps
-                :local ruleDomain ""
-                :do {
-                    :set ruleDomain [[:parse ":return [$section get $ruleId name]"]]
-                } on-error={}
-                :if ([:typeof $ruleDomain] = "str" && [:len $ruleDomain] > 0) do={
-                    :foreach c in=[/ip/dns/cache find where name~"$ruleDomain"] do={
-                        :do {
-                            :local cacheAddr [/ip/dns/cache get $c address]
-                            :if ([:typeof $cacheAddr] = "str" && [:len $cacheAddr] > 0 && $cacheAddr != "127.0.0.1" && $cacheAddr != "::1") do={
-                                :if ([:typeof [:find $remoteHookDnsKillIps ",$cacheAddr,"]] != "num") do={
-                                    :set remoteHookDnsKillIps ($remoteHookDnsKillIps . "$cacheAddr,")
-                                }
-                            }
-                        } on-error={}
-                    }
-                }
             }
 
             # Clear connection tracking only if rule was successfully enabled
             :if ($enableOk && [:find $section "firewall"] != nothing) do={
                 :local totalCleared 0
 
-                # Clear connections matching src-address-list
+                # Kill existing connections matching the rule's address-lists
                 :if ($hasSrcList) do={
-                    :local addrIds [/ip/firewall/address-list find list=$srcList]
-                    :foreach addrId in=$addrIds do={
-                        :local addr [/ip/firewall/address-list get $addrId address]
-                        :local isCidr false
-                        :local slashPos [:find $addr "/"]
-                        :if ([:typeof $slashPos] = "num") do={
-                            :set addr [:pick $addr 0 $slashPos]
-                            :set isCidr true
-                        }
-                        :local connIds
-                        :if ($isCidr) do={
-                            :set connIds [/ip/firewall/connection find src-address~"^$addr"]
-                        } else={
-                            :set connIds [/ip/firewall/connection find src-address=$addr]
-                        }
-                        :if ([:len $connIds] > 0) do={
-                            :do { /ip/firewall/connection remove $connIds } on-error={}
-                            :set totalCleared ($totalCleared + [:len $connIds])
-                        }
-                    }
+                    :set totalCleared ($totalCleared + [$clearListConns list=$srcList field="src" findConns=$findConns])
                 }
-
-                # Clear dst-list connections
                 :if ($hasDstList) do={
-                    :local addrIds [/ip/firewall/address-list find list=$dstList]
-                    :foreach addrId in=$addrIds do={
-                        :local addr [/ip/firewall/address-list get $addrId address]
-                        :local isCidr false
-                        :local slashPos [:find $addr "/"]
-                        :if ([:typeof $slashPos] = "num") do={
-                            :set addr [:pick $addr 0 $slashPos]
-                            :set isCidr true
-                        }
-                        :local connIds
-                        :if ($isCidr) do={
-                            :set connIds [/ip/firewall/connection find dst-address~"^$addr"]
-                        } else={
-                            :set connIds [/ip/firewall/connection find dst-address=$addr]
-                        }
-                        :if ([:len $connIds] > 0) do={
-                            :do { /ip/firewall/connection remove $connIds } on-error={}
-                            :set totalCleared ($totalCleared + [:len $connIds])
-                        }
-                    }
+                    :set totalCleared ($totalCleared + [$clearListConns list=$dstList field="dst" findConns=$findConns])
                 }
 
-                # Temp-block pre-collected src IPs for 1m, then kill all their connections
+                # Temp-block pre-collected src IPs for 30s, then kill all their connections
                 # Check if we have real IPs (not just empty initial element)
                 :local hasRealSrc false
                 :foreach chk in=$preCollectedSrc do={
@@ -268,7 +257,7 @@
                                 /ip/firewall/address-list add list=_temp-block address=$srcIp timeout=30s
                                 :log info "remote-hook: temp-blocked $srcIp for 30s ($paramName)"
                             } on-error={}
-                            :local allConns [/ip/firewall/connection find src-address=$srcIp]
+                            :local allConns [$findConns addr=$srcIp field="src"]
                             :if ([:len $allConns] > 0) do={
                                 :do { /ip/firewall/connection remove $allConns } on-error={}
                                 :set totalCleared ($totalCleared + [:len $allConns])
@@ -283,10 +272,6 @@
             }
         }
     } else={
-        :local currentDisabled
-        :do {
-            :set currentDisabled [[:parse ":return [$section get $ruleId disabled]"]]
-        } on-error={}
         :if ($currentDisabled = false) do={
             :local disableOk false
             :do {
@@ -357,7 +342,7 @@
                             :set shouldEnable true
                         }
                     }
-                    [$applyRule section=$section ruleId=$ruleId paramName=$paramName shouldEnable=$shouldEnable]
+                    [$applyRule section=$section ruleId=$ruleId paramName=$paramName shouldEnable=$shouldEnable findConns=$findConns clearListConns=$clearListConns appendUnique=$appendUnique]
                 }
             }
         }
@@ -374,7 +359,7 @@
         :set rulesByComment [[:parse ":return [$section find where comment~\"hook:\"]"]]
     } on-error={}
     :if ([:typeof $rulesByComment] = "array") do={
-        [$processRules rules=$rulesByComment section=$section field="comment" inverted=$inverted lookupEnabled=$lookupEnabled applyRule=$applyRule content=$content]
+        [$processRules rules=$rulesByComment section=$section field="comment" inverted=$inverted lookupEnabled=$lookupEnabled applyRule=$applyRule findConns=$findConns clearListConns=$clearListConns appendUnique=$appendUnique content=$content]
     }
 
     # --- 2. Search by name field (kid-control etc.) ---
@@ -383,82 +368,7 @@
         :set rulesByName [[:parse ":return [$section find where name~\"hook:\"]"]]
     } on-error={}
     :if ([:typeof $rulesByName] = "array") do={
-        [$processRules rules=$rulesByName section=$section field="name" inverted=$inverted lookupEnabled=$lookupEnabled applyRule=$applyRule content=$content]
-    }
-}
-
-# --- Temp-block + kill connections for clients talking to dns-blocked IPs ---
-# Walk dst-IPs collected from /ip/dns/cache during the main scan. For every
-# conntrack entry going to one of those IPs, extract the client src IP, add
-# it to the _temp-block address-list for 30s, then nuke every connection
-# originating from that client. This mirrors the firewall temp-block flow
-# (see applyRule, lines 243-265) and applies once per cycle.
-:if ([:len $remoteHookDnsKillIps] > 1) do={
-    :local totalKilled 0
-    :local distinctIps 0
-    :local distinctSrcs 0
-    :local seenSrcs ","
-    :local tempBlockReady false
-
-    :local acc $remoteHookDnsKillIps
-    :if ([:pick $acc 0 1] = ",") do={ :set acc [:pick $acc 1 [:len $acc]] }
-    :local nextComma [:find $acc ","]
-    :while ([:typeof $nextComma] = "num") do={
-        :local ip [:pick $acc 0 $nextComma]
-        :if ([:len $ip] > 0) do={
-            :set distinctIps ($distinctIps + 1)
-            :do {
-                :foreach cId in=[/ip/firewall/connection find where dst-address~"^$ip:"] do={
-                    :do {
-                        :local srcRaw [/ip/firewall/connection get $cId src-address]
-                        :local srcIp $srcRaw
-                        :local colonPos [:find $srcRaw ":"]
-                        :if ([:typeof $colonPos] = "num") do={
-                            :set srcIp [:pick $srcRaw 0 $colonPos]
-                        }
-                        :if ([:len $srcIp] > 0 && [:typeof [:find $seenSrcs ",$srcIp,"]] != "num") do={
-                            :set seenSrcs ($seenSrcs . "$srcIp,")
-                            :set distinctSrcs ($distinctSrcs + 1)
-
-                            # On first new client: ensure the _temp-block drop
-                            # rule exists in forward chain above established.
-                            :if (!$tempBlockReady) do={
-                                :local tbRule [/ip/firewall/filter find comment="hook:_temp-block"]
-                                :local estRule [/ip/firewall/filter find where chain=forward connection-state~"established"]
-                                :if ([:len $tbRule] = 0) do={
-                                    :if ([:len $estRule] > 0) do={
-                                        /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=($estRule->0)
-                                    } else={
-                                        /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=0
-                                    }
-                                    :log info "remote-hook: created _temp-block drop rule (dns block)"
-                                } else={
-                                    :if ([:len $estRule] > 0) do={
-                                        :do { /ip/firewall/filter move ($tbRule->0) ($estRule->0) } on-error={}
-                                    }
-                                }
-                                :set tempBlockReady true
-                            }
-
-                            # Temp-block this client for 30s and kill all its conns.
-                            :do {
-                                /ip/firewall/address-list add list=_temp-block address=$srcIp timeout=30s
-                            } on-error={}
-                            :local allConns [/ip/firewall/connection find where src-address~"^$srcIp:"]
-                            :if ([:len $allConns] > 0) do={
-                                :do { /ip/firewall/connection remove $allConns } on-error={}
-                                :set totalKilled ($totalKilled + [:len $allConns])
-                            }
-                        }
-                    } on-error={}
-                }
-            } on-error={}
-        }
-        :set acc [:pick $acc ($nextComma + 1) [:len $acc]]
-        :set nextComma [:find $acc ","]
-    }
-    :if ($distinctSrcs > 0) do={
-        :log info "remote-hook: killed $totalKilled conns from $distinctSrcs devices for $distinctIps dns-blocked IPs (30s temp-block)"
+        [$processRules rules=$rulesByName section=$section field="name" inverted=$inverted lookupEnabled=$lookupEnabled applyRule=$applyRule findConns=$findConns clearListConns=$clearListConns appendUnique=$appendUnique content=$content]
     }
 }
 

@@ -159,8 +159,27 @@ Drop-правило `_temp-block` автоматически создаётся 
 | `/ip/firewall/nat` | `comment` | Прямая |
 | `/ip/firewall/mangle` | `comment` | Прямая |
 | `/ip/kid-control` | `name` | Инвертированная (enabled = ограничения сняты) |
+| `/ip/dns/static` | `comment` | Прямая (при тоггле DNS-кеш сбрасывается) |
 
 Для добавления новых разделов — отредактируйте массив `sections` в скрипте. Для инвертированной логики — также `invertedSections`.
+
+### Блокировка домена (рекомендуемая схема)
+
+Один тег `hook:<name>` вешается на **пару** правил — DNS-уровень и L3-уровень:
+
+```
+# 1. DNS: клиенты, использующие DNS роутера, перестают резолвить домен (+ все поддомены)
+/ip/dns/static add name=example.com type=NXDOMAIN match-subdomain=yes comment="hook:example" disabled=yes
+
+# 2. Firewall: address-list с FQDN — RouterOS сам резолвит домен и динамически
+#    поддерживает актуальные IP (включая новые CDN-адреса)
+/ip/firewall/address-list add list=blocked-example address=example.com
+/ip/firewall/filter add chain=forward dst-address-list=blocked-example action=drop comment="hook:example" disabled=yes
+```
+
+Тоггл в UI включает оба правила сразу. DNS-запись отсекает новые резолвы (кеш сбрасывается автоматически), а firewall-правило блокирует трафик даже у клиентов с закешированным IP или DoH. Conntrack clearing и temp-block обрабатываются штатным firewall-потоком скрипта (по `dst-address-list`).
+
+> `match-subdomain=yes` требует RouterOS ≥ 7.6.
 
 ### Поведение при сбоях
 

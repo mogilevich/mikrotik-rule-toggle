@@ -54,7 +54,8 @@ Single `main` package, no internal packages. Static files embedded via `//go:emb
 - Firewall rules: matched by `comment` containing `hook:<param-name>`
 - Kid-control: matched by `name` containing `hook:<param-name>` (inverted logic)
 - `invertedSections` array controls which sections have inverted logic
-- Scans configurable `sections` array (firewall filter/nat/mangle, kid-control)
+- Scans configurable `sections` array (firewall filter/nat/mangle, kid-control, dns/static)
+- Domain blocking: one `hook:<name>` toggles a pair — `/ip/dns/static` entry (`type=NXDOMAIN match-subdomain=yes`) + firewall filter rule with `dst-address-list` holding FQDN entries (RouterOS resolves FQDNs in address-lists dynamically). Script only flushes DNS cache on dns/static toggle; conntrack/temp-block is handled by the regular firewall flow
 - Uses `:parse` to dynamically build commands — intentional due to RouterOS limitations
 - JSON parsing via string search (`:find`) — RouterOS has no JSON parser
 - Conntrack clearing: resolves address-lists to IPs via `/ip/firewall/address-list`, exact match for IPs, regex for CIDR

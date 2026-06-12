@@ -2,3 +2,4 @@ data/
 hook-server
 *.exe
 .env
+.claude/
