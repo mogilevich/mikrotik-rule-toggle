@@ -26,7 +26,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "17"
+:local scriptVersion "18"
 
 # Set by applyRule when a /ip/dns/static entry actually changes state.
 # Used after the main scan to flush DNS cache at most once per cycle.
@@ -58,6 +58,22 @@
     :error "invalid response"
 }
 
+# --- Reentrancy lock: skip if a previous run is still applying changes ---
+# With short scheduler intervals a slow conntrack sweep can outlive the
+# interval and two runs race on the same rules/connections. Lock is the
+# uptime of acquisition; a crashed run's stale lock expires after 90s
+# (globals are also wiped on reboot, so no stale lock can survive one).
+# Acquired after fetch/validation so a dead server never holds the lock.
+:global remoteHookLock
+:local nowUptime [/system/resource get uptime]
+:if ([:typeof $remoteHookLock] = "time") do={
+    :if (($nowUptime - $remoteHookLock) < 1m30s) do={
+        :log info "remote-hook: previous run still active, skipping"
+        :error "locked"
+    }
+}
+:set remoteHookLock $nowUptime
+
 # --- Helper: look up param enabled state in JSON ---
 # Returns true/false/nil (nil = param not found)
 :local lookupEnabled do={
@@ -82,13 +98,16 @@
 # ("172.16.0.0/16" -> "^172\.16\."). Non-octet-aligned masks round down to
 # the nearest octet (slight over-match, acceptable for connection clearing).
 :local findConns do={
-    :if ([:len $addr] = 0) do={ :return [:toarray ""] }
+    :local out [:toarray ""]
+    :if ([:len $addr] = 0) do={ :return $out }
     :local slashPos [:find $addr "/"]
     :if ([:typeof $slashPos] != "num") do={
         :if ($field = "src") do={
-            :return [/ip/firewall/connection find src-address=$addr]
+            :do { :set out [/ip/firewall/connection find src-address=$addr] } on-error={}
+        } else={
+            :do { :set out [/ip/firewall/connection find dst-address=$addr] } on-error={}
         }
-        :return [/ip/firewall/connection find dst-address=$addr]
+        :return $out
     }
     :local net [:pick $addr 0 $slashPos]
     :local mask [:tonum [:pick $addr ($slashPos + 1) [:len $addr]]]
@@ -116,9 +135,11 @@
         :set rx ($rx . "(:|\$)")
     }
     :if ($field = "src") do={
-        :return [/ip/firewall/connection find src-address~"$rx"]
+        :do { :set out [/ip/firewall/connection find src-address~"$rx"] } on-error={}
+    } else={
+        :do { :set out [/ip/firewall/connection find dst-address~"$rx"] } on-error={}
     }
-    :return [/ip/firewall/connection find dst-address~"$rx"]
+    :return $out
 }
 
 # --- Helper: remove conntrack entries matching an address-list ---
@@ -422,5 +443,8 @@
         }
     }
 }
+
+# Release the reentrancy lock (a crashed run's lock expires by itself)
+:set remoteHookLock
 
 :log info "remote-hook: sync completed"
