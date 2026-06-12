@@ -181,6 +181,23 @@ Drop-правило `_temp-block` автоматически создаётся 
 
 > `match-subdomain=yes` требует RouterOS ≥ 7.6.
 
+### Блокировка игр (Roblox и подобные)
+
+Игровые клиенты часто получают IP сервера через API (не DNS) и играют по UDP напрямую — FQDN-записи такой трафик не покрывают, и живая игровая сессия переживает блокировку. Нужны два дополнения:
+
+```
+# 1. Сети игровых серверов статикой (Roblox = AS22697)
+/ip/firewall/address-list add list=roblox address=128.116.0.0/17 comment="Roblox AS22697 game servers"
+
+# 2. src-address-list с устройствами детей в блок-правиле — при включении блока
+#    скрипт temp-блочит устройства на 30 сек и убивает ВСЕ их соединения,
+#    игровая сессия гибнет даже если IP сервера нет в списках
+/ip/firewall/address-list add list=kids-devices address=10.0.0.55
+/ip/firewall/filter set [find comment="hook:roblox-drop"] src-address-list=kids-devices
+```
+
+После temp-block интернет возвращается через 30 сек, но перезайти в игру не выйдет — матчмейкинг закрыт DNS- и firewall-слоями.
+
 ### Поведение при сбоях
 
 | Ситуация | Поведение |
