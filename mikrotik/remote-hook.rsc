@@ -26,7 +26,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "18"
+:local scriptVersion "19"
 
 # Set by applyRule when a /ip/dns/static entry actually changes state.
 # Used after the main scan to flush DNS cache at most once per cycle.
@@ -63,16 +63,20 @@
 # interval and two runs race on the same rules/connections. Lock is the
 # uptime of acquisition; a crashed run's stale lock expires after 90s
 # (globals are also wiped on reboot, so no stale lock can survive one).
-# Acquired after fetch/validation so a dead server never holds the lock.
+# Checked after fetch/validation so a dead server never holds the lock.
+# The skip is a quiet exit (guard flag, no :error) so the scheduler does
+# not log it as a script failure.
 :global remoteHookLock
 :local nowUptime [/system/resource get uptime]
+:local lockBusy false
 :if ([:typeof $remoteHookLock] = "time") do={
-    :if (($nowUptime - $remoteHookLock) < 1m30s) do={
-        :log info "remote-hook: previous run still active, skipping"
-        :error "locked"
-    }
+    :if (($nowUptime - $remoteHookLock) < 1m30s) do={ :set lockBusy true }
 }
-:set remoteHookLock $nowUptime
+:if ($lockBusy) do={
+    :log info "remote-hook: previous run still active, skipping"
+} else={
+    :set remoteHookLock $nowUptime
+}
 
 # --- Helper: look up param enabled state in JSON ---
 # Returns true/false/nil (nil = param not found)
@@ -384,67 +388,70 @@
     }
 }
 
-# --- Scan each section ---
-:foreach section in=$sections do={
-    :local inverted [$isInverted section=$section invertedSections=$invertedSections]
+# --- Main: scan sections, flush DNS, auto-update (skipped when locked) ---
+:if (!$lockBusy) do={
+    # --- Scan each section ---
+    :foreach section in=$sections do={
+        :local inverted [$isInverted section=$section invertedSections=$invertedSections]
 
-    # --- 1. Search by comment field (firewall rules etc.) ---
-    :local rulesByComment
-    :do {
-        :set rulesByComment [[:parse ":return [$section find where comment~\"hook:\"]"]]
-    } on-error={}
-    :if ([:typeof $rulesByComment] = "array") do={
-        [$processRules rules=$rulesByComment section=$section field="comment" inverted=$inverted lookupEnabled=$lookupEnabled applyRule=$applyRule findConns=$findConns clearListConns=$clearListConns appendUnique=$appendUnique content=$content]
-    }
-
-    # --- 2. Search by name field (kid-control etc.) ---
-    :local rulesByName
-    :do {
-        :set rulesByName [[:parse ":return [$section find where name~\"hook:\"]"]]
-    } on-error={}
-    :if ([:typeof $rulesByName] = "array") do={
-        [$processRules rules=$rulesByName section=$section field="name" inverted=$inverted lookupEnabled=$lookupEnabled applyRule=$applyRule findConns=$findConns clearListConns=$clearListConns appendUnique=$appendUnique content=$content]
-    }
-}
-
-# --- Flush DNS cache once if any /ip/dns/static entry changed ---
-:if ($remoteHookDnsFlushNeeded = true) do={
-    :do {
-        /ip/dns/cache/flush
-        :log info "remote-hook: flushed DNS cache after dns/static toggle"
-    } on-error={
-        :log warning "remote-hook: failed to flush DNS cache"
-    }
-}
-
-# --- Auto-update script if server signals new version ---
-:local updatePos [:find $content "\"script_update\""]
-:if ([:typeof $updatePos] = "num") do={
-    :local trueCheck [:find $content "true" $updatePos]
-    :if ([:typeof $trueCheck] != "num") do={ :set updatePos nothing }
-}
-:if ([:typeof $updatePos] = "num") do={
-    :log info "remote-hook: server signals script update, downloading new version"
-    # Derive base URL from api/state URL
-    :local baseUrl [:pick $url 0 [:find $url "/api/state"]]
-    :local rscUrl "$baseUrl/mikrotik/remote-hook.rsc"
-    :local newScript ""
-    :do {
-        :set newScript ([/tool/fetch url=$rscUrl output=user as-value duration=10]->"data")
-    } on-error={
-        :log warning "remote-hook: failed to download updated script"
-    }
-    :if ([:len $newScript] > 0) do={
+        # --- 1. Search by comment field (firewall rules etc.) ---
+        :local rulesByComment
         :do {
-            /system/script set $scriptName source=$newScript
-            :log info "remote-hook: script updated successfully"
-        } on-error={
-            :log warning "remote-hook: failed to update script source"
+            :set rulesByComment [[:parse ":return [$section find where comment~\"hook:\"]"]]
+        } on-error={}
+        :if ([:typeof $rulesByComment] = "array") do={
+            [$processRules rules=$rulesByComment section=$section field="comment" inverted=$inverted lookupEnabled=$lookupEnabled applyRule=$applyRule findConns=$findConns clearListConns=$clearListConns appendUnique=$appendUnique content=$content]
+        }
+
+        # --- 2. Search by name field (kid-control etc.) ---
+        :local rulesByName
+        :do {
+            :set rulesByName [[:parse ":return [$section find where name~\"hook:\"]"]]
+        } on-error={}
+        :if ([:typeof $rulesByName] = "array") do={
+            [$processRules rules=$rulesByName section=$section field="name" inverted=$inverted lookupEnabled=$lookupEnabled applyRule=$applyRule findConns=$findConns clearListConns=$clearListConns appendUnique=$appendUnique content=$content]
         }
     }
+
+    # --- Flush DNS cache once if any /ip/dns/static entry changed ---
+    :if ($remoteHookDnsFlushNeeded = true) do={
+        :do {
+            /ip/dns/cache/flush
+            :log info "remote-hook: flushed DNS cache after dns/static toggle"
+        } on-error={
+            :log warning "remote-hook: failed to flush DNS cache"
+        }
+    }
+
+    # --- Auto-update script if server signals new version ---
+    :local updatePos [:find $content "\"script_update\""]
+    :if ([:typeof $updatePos] = "num") do={
+        :local trueCheck [:find $content "true" $updatePos]
+        :if ([:typeof $trueCheck] != "num") do={ :set updatePos nothing }
+    }
+    :if ([:typeof $updatePos] = "num") do={
+        :log info "remote-hook: server signals script update, downloading new version"
+        # Derive base URL from api/state URL
+        :local baseUrl [:pick $url 0 [:find $url "/api/state"]]
+        :local rscUrl "$baseUrl/mikrotik/remote-hook.rsc"
+        :local newScript ""
+        :do {
+            :set newScript ([/tool/fetch url=$rscUrl output=user as-value duration=10]->"data")
+        } on-error={
+            :log warning "remote-hook: failed to download updated script"
+        }
+        :if ([:len $newScript] > 0) do={
+            :do {
+                /system/script set $scriptName source=$newScript
+                :log info "remote-hook: script updated successfully"
+            } on-error={
+                :log warning "remote-hook: failed to update script source"
+            }
+        }
+    }
+
+    # Release the reentrancy lock (a crashed run's lock expires by itself)
+    :set remoteHookLock
+
+    :log info "remote-hook: sync completed"
 }
-
-# Release the reentrancy lock (a crashed run's lock expires by itself)
-:set remoteHookLock
-
-:log info "remote-hook: sync completed"
