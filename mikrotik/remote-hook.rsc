@@ -26,7 +26,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "19"
+:local scriptVersion "20"
 
 # Set by applyRule when a /ip/dns/static entry actually changes state.
 # Used after the main scan to flush DNS cache at most once per cycle.
@@ -152,7 +152,9 @@
 # guarded so a vanished entry is skipped instead of killing the script.
 :local clearListConns do={
     :local total 0
-    :foreach addrId in=[/ip/firewall/address-list find where list=$list && !disabled] do={
+    :local addrIds [:toarray ""]
+    :do { :set addrIds [/ip/firewall/address-list find where list=$list && !disabled] } on-error={}
+    :foreach addrId in=$addrIds do={
         :local addr ""
         :do { :set addr [:tostr [/ip/firewall/address-list get $addrId address]] } on-error={}
         :if ([:len $addr] > 0) do={
@@ -200,7 +202,9 @@
 
                 # Priority 1: src-address-list → resolve to IPs
                 :if ($hasSrcList) do={
-                    :foreach addrId in=[/ip/firewall/address-list find where list=$srcList && !disabled] do={
+                    :local srcAddrIds [:toarray ""]
+                    :do { :set srcAddrIds [/ip/firewall/address-list find where list=$srcList && !disabled] } on-error={}
+                    :foreach addrId in=$srcAddrIds do={
                         :local addr ""
                         :do { :set addr [:tostr [/ip/firewall/address-list get $addrId address]] } on-error={}
                         :local slashPos [:find $addr "/"]
@@ -219,7 +223,9 @@
                 }
                 # Priority 3: no src info → scan conntrack by dst-address-list
                 :if (!$hasSrcList && !$hasSrcAddr && $hasDstList) do={
-                    :foreach addrId in=[/ip/firewall/address-list find where list=$dstList && !disabled] do={
+                    :local dstAddrIds [:toarray ""]
+                    :do { :set dstAddrIds [/ip/firewall/address-list find where list=$dstList && !disabled] } on-error={}
+                    :foreach addrId in=$dstAddrIds do={
                         :local addr ""
                         :do { :set addr [:tostr [/ip/firewall/address-list get $addrId address]] } on-error={}
                         :foreach connId in=[$findConns addr=$addr field="dst"] do={
@@ -381,7 +387,13 @@
                             :set shouldEnable true
                         }
                     }
-                    [$applyRule section=$section ruleId=$ruleId paramName=$paramName shouldEnable=$shouldEnable findConns=$findConns clearListConns=$clearListConns appendUnique=$appendUnique]
+                    # Contain failures to this one rule: the rest of the
+                    # rules, dns toggles and lock release must still run
+                    :do {
+                        [$applyRule section=$section ruleId=$ruleId paramName=$paramName shouldEnable=$shouldEnable findConns=$findConns clearListConns=$clearListConns appendUnique=$appendUnique]
+                    } on-error={
+                        :log warning "remote-hook: apply error for $paramName in $section"
+                    }
                 }
             }
         }
