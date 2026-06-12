@@ -26,7 +26,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "15"
+:local scriptVersion "16"
 
 # Set by applyRule when a /ip/dns/static entry actually changes state.
 # Used after the main scan to flush DNS cache at most once per cycle.
@@ -82,6 +82,7 @@
 # ("172.16.0.0/16" -> "^172\.16\."). Non-octet-aligned masks round down to
 # the nearest octet (slight over-match, acceptable for connection clearing).
 :local findConns do={
+    :if ([:len $addr] = 0) do={ :return [:toarray ""] }
     :local slashPos [:find $addr "/"]
     :if ([:typeof $slashPos] != "num") do={
         :if ($field = "src") do={
@@ -122,14 +123,19 @@
 
 # --- Helper: remove conntrack entries matching an address-list ---
 # field: "src" or "dst". Returns the number of removed connections.
+# Dynamic (FQDN-resolved) list entries can expire mid-loop — the get is
+# guarded so a vanished entry is skipped instead of killing the script.
 :local clearListConns do={
     :local total 0
     :foreach addrId in=[/ip/firewall/address-list find list=$list] do={
-        :local addr [/ip/firewall/address-list get $addrId address]
-        :local connIds [$findConns addr=$addr field=$field]
-        :if ([:len $connIds] > 0) do={
-            :do { /ip/firewall/connection remove $connIds } on-error={}
-            :set total ($total + [:len $connIds])
+        :local addr ""
+        :do { :set addr [:tostr [/ip/firewall/address-list get $addrId address]] } on-error={}
+        :if ([:len $addr] > 0) do={
+            :local connIds [$findConns addr=$addr field=$field]
+            :if ([:len $connIds] > 0) do={
+                :do { /ip/firewall/connection remove $connIds } on-error={}
+                :set total ($total + [:len $connIds])
+            }
         }
     }
     :return $total
@@ -170,10 +176,13 @@
                 # Priority 1: src-address-list → resolve to IPs
                 :if ($hasSrcList) do={
                     :foreach addrId in=[/ip/firewall/address-list find list=$srcList] do={
-                        :local addr [/ip/firewall/address-list get $addrId address]
+                        :local addr ""
+                        :do { :set addr [:tostr [/ip/firewall/address-list get $addrId address]] } on-error={}
                         :local slashPos [:find $addr "/"]
                         :if ([:typeof $slashPos] = "num") do={ :set addr [:pick $addr 0 $slashPos] }
-                        :set preCollectedSrc [$appendUnique arr=$preCollectedSrc item=$addr]
+                        :if ([:len $addr] > 0) do={
+                            :set preCollectedSrc [$appendUnique arr=$preCollectedSrc item=$addr]
+                        }
                     }
                 }
                 # Priority 2: src-address → use directly
@@ -186,7 +195,8 @@
                 # Priority 3: no src info → scan conntrack by dst-address-list
                 :if (!$hasSrcList && !$hasSrcAddr && $hasDstList) do={
                     :foreach addrId in=[/ip/firewall/address-list find list=$dstList] do={
-                        :local addr [/ip/firewall/address-list get $addrId address]
+                        :local addr ""
+                        :do { :set addr [:tostr [/ip/firewall/address-list get $addrId address]] } on-error={}
                         :foreach connId in=[$findConns addr=$addr field="dst"] do={
                             :do {
                                 :local srcIp [:tostr [/ip/firewall/connection get $connId src-address]]
@@ -240,12 +250,16 @@
                     :local tbRule [/ip/firewall/filter find comment="hook:_temp-block"]
                     :local estRule [/ip/firewall/filter find where chain=forward connection-state~"established"]
                     :if ([:len $tbRule] = 0) do={
-                        :if ([:len $estRule] > 0) do={
-                            /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=($estRule->0)
-                        } else={
-                            /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=0
+                        :do {
+                            :if ([:len $estRule] > 0) do={
+                                /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=($estRule->0)
+                            } else={
+                                /ip/firewall/filter add chain=forward src-address-list=_temp-block action=drop comment="hook:_temp-block" place-before=0
+                            }
+                            :log info "remote-hook: created _temp-block drop rule"
+                        } on-error={
+                            :log warning "remote-hook: failed to create _temp-block drop rule"
                         }
-                        :log info "remote-hook: created _temp-block drop rule"
                     } else={
                         :if ([:len $estRule] > 0) do={
                             :do { /ip/firewall/filter move ($tbRule->0) ($estRule->0) } on-error={}
