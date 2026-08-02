@@ -78,7 +78,7 @@ Single `main` package, no internal packages. Static files embedded via `//go:emb
 - Auth: optional Bearer token via `AUTH_TOKEN` env; applies only to `/api/*` routes
 - UI stores token in localStorage
 - Timer: `TempRelease` creates pending timer (`timer_duration`); countdown starts only after router fetches state (`disabled_until`). Active timers can be extended. `revert_enabled` stores the state to restore on expiry — timers work in both directions (release AND restrict, e.g. device pause)
-- Device params (kid-control, `kind: device`): `enabled=true` in API → `disabled=yes` on MikroTik (enabled = unrestricted). UI toggles show "checked = restrictions active" for both kinds (`toggleCard` inverts for devices)
+- Device params (kid-control, `kind: device`): `enabled=true` in API → `disabled=yes` on MikroTik (enabled = unrestricted). UI toggle: checked = rule active on router (`toggleCard` inverts for devices); devices style it blue ("kid-control on" = schedule mode, NOT a hard block — during allowed hours the kid has access), services red (blocked)
 - Groups/presets live in `state.json`; seeded on first run (games/video/social, homework/free-hour). Group titles/preset titles empty by default — UI translates well-known ids via i18n, custom ones store explicit `title`
 - Legacy params (`inverted` without `kind`) are migrated on load; `inverted` is kept in sync for rollback compatibility
 - Docker image built by GitHub Actions, pushed to `ghcr.io/mogilevich/mikrotik-rule-toggle`

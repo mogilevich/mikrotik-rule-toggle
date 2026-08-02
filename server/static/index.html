@@ -124,6 +124,7 @@
   .card.active   { background: color-mix(in srgb, var(--card), #FF3B30 5%); }
   .card.inactive { background: color-mix(in srgb, var(--card), #34C759 5%); }
   .card.timed    { background: color-mix(in srgb, var(--card), #FF9500 7%); }
+  .card.schedule { background: color-mix(in srgb, var(--card), #007AFF 5%); }
   @supports not (background: color-mix(in srgb, white, red)) {
     .card.active   { background: var(--card-active-bg); }
     .card.inactive { background: var(--card-inactive-bg); }
@@ -161,9 +162,10 @@
     border-radius: 6px;
     display: inline-block;
   }
-  .status-badge.blocked { background: rgba(255,59,48,.12); color: var(--red); }
-  .status-badge.allowed { background: rgba(52,199,89,.12); color: var(--green); }
-  .status-badge.timer   { background: rgba(255,149,0,.12); color: var(--orange); }
+  .status-badge.blocked  { background: rgba(255,59,48,.12); color: var(--red); }
+  .status-badge.allowed  { background: rgba(52,199,89,.12); color: var(--green); }
+  .status-badge.timer    { background: rgba(255,149,0,.12); color: var(--orange); }
+  .status-badge.schedule { background: rgba(0,122,255,.12); color: var(--blue); }
 
   .type-label {
     font-size: 11px;
@@ -196,6 +198,7 @@
   }
   .toggle input:checked + .slider { background: var(--red); }
   .toggle input:checked + .slider::before { transform: translateX(20px); }
+  .toggle.device input:checked + .slider { background: var(--blue); }
 
   .delete-btn {
     background: none; border: none;
@@ -798,15 +801,15 @@ const T = {
     group_all_blocked: "all blocked",
     group_all_allowed: "all allowed",
     group_mixed: "mixed",
-    status_dev_allowed: "unrestricted",
-    status_dev_restricted: "restricted",
+    status_dev_allowed: "no limits",
+    status_dev_restricted: "kid-control on",
     status_paused: "paused",
     status_temp_blocked: "temp. blocked",
     type_device: "device",
     err_status: "Error: {0}",
     err_connect: "Could not connect",
     empty_params: "No parameters",
-    status_temp_off: "temp. off",
+    status_temp_off: "temp. no limits",
     status_temp_on: "temp. allowed",
     status_off: "off",
     status_blocked: "blocked",
@@ -882,15 +885,15 @@ const T = {
     group_all_blocked: "всё заблокировано",
     group_all_allowed: "всё разрешено",
     group_mixed: "частично",
-    status_dev_allowed: "доступ открыт",
-    status_dev_restricted: "ограничения активны",
+    status_dev_allowed: "без ограничений",
+    status_dev_restricted: "kid-control активен",
     status_paused: "пауза",
     status_temp_blocked: "врем. блок",
     type_device: "устройство",
     err_status: "Ошибка: {0}",
     err_connect: "Не удалось подключиться",
     empty_params: "Нет параметров",
-    status_temp_off: "врем. выключен",
+    status_temp_off: "врем. без ограничений",
     status_temp_on: "врем. разрешено",
     status_off: "выключен",
     status_blocked: "заблокир.",
@@ -1047,8 +1050,9 @@ function renderCard(k, p) {
     badgeClass = "timer";
     badgeText = inv ? t("status_paused") : t("status_temp_blocked");
   } else if (blocked) {
-    stateClass = "active";
-    badgeClass = "blocked";
+    // Device with kid-control entry active = schedule mode, not a hard block
+    stateClass = inv ? "schedule" : "active";
+    badgeClass = inv ? "schedule" : "blocked";
     badgeText = inv ? t("status_dev_restricted") : t("status_blocked");
   } else {
     stateClass = "inactive";
@@ -1109,7 +1113,7 @@ function renderCard(k, p) {
         <div class="desc">${esc(p.description)}</div>
         <div class="badge-row"><span class="status-badge ${badgeClass}">${badgeText}</span></div>
       </div>
-      <label class="toggle" title="${toggleTitle}"><input type="checkbox" ${blocked ? "checked" : ""} onchange="toggleCard('${esc(k)}', this.checked)"><span class="slider"></span></label>
+      <label class="toggle${inv ? " device" : ""}" title="${toggleTitle}"><input type="checkbox" ${blocked ? "checked" : ""} onchange="toggleCard('${esc(k)}', this.checked)"><span class="slider"></span></label>
       <button class="delete-btn" onclick="deleteParam('${esc(k)}')" title="${esc(t("delete_tooltip"))}">&times;</button>
     </div>
     ${timerRow}
