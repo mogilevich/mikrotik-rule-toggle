@@ -26,7 +26,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "20"
+:local scriptVersion "21"
 
 # Set by applyRule when a /ip/dns/static entry actually changes state.
 # Used after the main scan to flush DNS cache at most once per cycle.
@@ -35,14 +35,18 @@
 :local scriptName "remote-hook"
 
 # --- Fetch state from server (in memory, no disk writes) ---
+# X-Seen-Params reports hook tags found during the PREVIOUS run (one cycle
+# behind) — the server uses it to warn about params with no rule on router.
 :local content ""
+:local hdr "X-Script-Version: $scriptVersion"
+:if ($token != "") do={ :set hdr ("Authorization: Bearer $token," . $hdr) }
+:global remoteHookSeen
+:if ([:typeof $remoteHookSeen] = "str" && [:len $remoteHookSeen] > 0) do={
+    :set hdr ($hdr . ",X-Seen-Params: " . $remoteHookSeen)
+}
 
 :do {
-    :if ($token != "") do={
-        :set content ([/tool/fetch url=$url http-header-field="Authorization: Bearer $token,X-Script-Version: $scriptVersion" output=user as-value duration=10]->"data")
-    } else={
-        :set content ([/tool/fetch url=$url http-header-field="X-Script-Version: $scriptVersion" output=user as-value duration=10]->"data")
-    }
+    :set content ([/tool/fetch url=$url http-header-field=$hdr output=user as-value duration=10]->"data")
 } on-error={
     :log warning "remote-hook: failed to fetch state from $url"
     :error "fetch failed"
@@ -377,6 +381,9 @@
                 } else={
                     :set paramName [:pick $tagValue $paramStart [:len $tagValue]]
                 }
+                # Inventory for X-Seen-Params (reported next run)
+                :global remoteHookSeenNew
+                :set remoteHookSeenNew [$appendUnique arr=$remoteHookSeenNew item=$paramName]
                 :local shouldEnable [$lookupEnabled paramName=$paramName content=$content]
                 :if ([:typeof $shouldEnable] = "bool") do={
                     # Invert logic for kid-control sections
@@ -400,8 +407,11 @@
     }
 }
 
-# --- Main: scan sections, flush DNS, auto-update (skipped when locked) ---
+# --- Main: scan sections, flush DNS, auto-import, auto-update (skipped when locked) ---
 :if (!$lockBusy) do={
+    :global remoteHookSeenNew
+    :set remoteHookSeenNew [:toarray ""]
+
     # --- Scan each section ---
     :foreach section in=$sections do={
         :local inverted [$isInverted section=$section invertedSections=$invertedSections]
@@ -432,6 +442,47 @@
             :log info "remote-hook: flushed DNS cache after dns/static toggle"
         } on-error={
             :log warning "remote-hook: failed to flush DNS cache"
+        }
+    }
+
+    # --- Publish rule inventory for the next run's X-Seen-Params header ---
+    :local seenJoined ""
+    :foreach s in=$remoteHookSeenNew do={
+        :if ([:len $s] > 0) do={
+            :if ([:len $seenJoined] > 0) do={ :set seenJoined ($seenJoined . ",") }
+            :set seenJoined ($seenJoined . $s)
+        }
+    }
+    :set remoteHookSeen $seenJoined
+
+    # --- Auto-import service templates when their content changes ---
+    # Server sends templates_hash over the templates imported in the app.
+    # Import runs only on mismatch (new service imported / catalog updated);
+    # the generated script is idempotent, existing entries are kept.
+    :local tplHash ""
+    :local tplPos [:find $content "\"templates_hash\""]
+    :if ([:typeof $tplPos] = "num") do={
+        :local q1 [:find $content "\"" ($tplPos + 16)]
+        :if ([:typeof $q1] = "num") do={
+            :local q2 [:find $content "\"" ($q1 + 1)]
+            :if ([:typeof $q2] = "num") do={
+                :set tplHash [:pick $content ($q1 + 1) $q2]
+            }
+        }
+    }
+    :global remoteHookTplHash
+    :local curTplHash ""
+    :if ([:typeof $remoteHookTplHash] = "str") do={ :set curTplHash $remoteHookTplHash }
+    :if ([:len $tplHash] > 0 && $tplHash != $curTplHash) do={
+        :log info "remote-hook: templates changed, importing"
+        :local tplBaseUrl [:pick $url 0 [:find $url "/api/state"]]
+        :do {
+            /tool/fetch url="$tplBaseUrl/mikrotik/templates.rsc?imported=1" dst-path=remote-hook-templates.rsc duration=15
+            /import file-name=remote-hook-templates.rsc
+            :set remoteHookTplHash $tplHash
+            :log info "remote-hook: templates imported ($tplHash)"
+        } on-error={
+            :log warning "remote-hook: template import failed"
         }
     }
 

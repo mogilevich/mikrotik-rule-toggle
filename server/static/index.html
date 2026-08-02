@@ -166,6 +166,7 @@
   .status-badge.allowed  { background: rgba(52,199,89,.12); color: var(--green); }
   .status-badge.timer    { background: rgba(255,149,0,.12); color: var(--orange); }
   .status-badge.schedule { background: rgba(0,122,255,.12); color: var(--blue); }
+  .status-badge.norule   { background: rgba(255,59,48,.12); color: var(--red); border: 1px dashed rgba(255,59,48,.4); }
 
   .type-label {
     font-size: 11px;
@@ -877,8 +878,9 @@ const T = {
     tpl_import_all: "Import all to the app",
     tpl_add: "Add",
     tpl_imported: "✓ added",
-    tpl_router_hint: "Firewall rules on the router (DNS + address-lists + drop rules, created disabled) — run once:",
+    tpl_router_hint: "Router rules are auto-imported within a minute after adding (script v21+). Manual import of the full catalog:",
     tpl_more_domains: "+{0} more",
+    status_norule: "no rule on router",
     section_devices: "Devices",
     section_other: "Other",
     group_games: "Games",
@@ -967,8 +969,9 @@ const T = {
     tpl_import_all: "Импортировать всё в приложение",
     tpl_add: "Добавить",
     tpl_imported: "✓ добавлен",
-    tpl_router_hint: "Правила в фаервол роутера (DNS + address-list-ы + drop-правила, создаются выключенными) — выполнить один раз:",
+    tpl_router_hint: "Правила на роутере создаются автоматически в течение минуты после добавления (скрипт v21+). Ручной импорт всего каталога:",
     tpl_more_domains: "+{0} ещё",
+    status_norule: "нет правила на роутере",
     section_devices: "Устройства",
     section_other: "Прочее",
     group_games: "Игры",
@@ -1051,6 +1054,7 @@ let currentParams = {};
 let currentGroups = {};
 let currentPresets = {};
 let newParamKind = "service";
+let routerSeen = null; // hook tags present on the router, null = not reported yet
 document.getElementById("token").value = authToken;
 
 function applyStaticI18n() {
@@ -1215,7 +1219,7 @@ function renderCard(k, p) {
       <div class="info">
         <div class="name">${esc(k)}${typeLabel}</div>
         <div class="desc">${esc(p.description)}</div>
-        <div class="badge-row"><span class="status-badge ${badgeClass}">${badgeText}</span></div>
+        <div class="badge-row"><span class="status-badge ${badgeClass}">${badgeText}</span>${routerSeen && !routerSeen.includes(k) ? ' <span class="status-badge norule">' + esc(t("status_norule")) + '</span>' : ''}</div>
       </div>
       <label class="toggle${inv ? " device" : ""}" title="${toggleTitle}"><input type="checkbox" ${blocked ? "checked" : ""} onchange="toggleCard('${esc(k)}', this.checked)"><span class="slider"></span></label>
       <button class="delete-btn" onclick="deleteParam('${esc(k)}')" title="${esc(t("delete_tooltip"))}">&times;</button>
@@ -1551,6 +1555,11 @@ async function loadHeartbeat() {
     }
     const scriptWarn = data.script_outdated ? '<span class="script-warn" title="' + esc(t("script_outdated")) + '">⚠</span>' : '';
     el.innerHTML = `<div class="router-dot ${dotClass}"></div><span class="router-time">${timeText}</span>${scriptWarn}`;
+    const seen = data.seen_params && data.seen_params.length ? data.seen_params : null;
+    if (JSON.stringify(seen) !== JSON.stringify(routerSeen)) {
+      routerSeen = seen;
+      render();
+    }
   } catch(e) {}
 }
 

@@ -24,21 +24,26 @@ var staticFiles embed.FS
 type Heartbeat struct {
 	mu            sync.RWMutex
 	lastSeen      time.Time
-	routerVersion string // script version reported by router
-	serverVersion string // script version extracted from .rsc on server
+	routerVersion string   // script version reported by router
+	serverVersion string   // script version extracted from .rsc on server
+	seenParams    []string // hook tags the router found last cycle (X-Seen-Params)
 }
 
-func (h *Heartbeat) Touch(routerVersion string) {
+func (h *Heartbeat) Touch(routerVersion string, seenParams []string) {
 	h.mu.Lock()
 	h.lastSeen = time.Now()
 	h.routerVersion = routerVersion
+	if seenParams != nil {
+		h.seenParams = seenParams
+	}
 	h.mu.Unlock()
 }
 
 type heartbeatResponse struct {
-	LastSeen       *int64 `json:"last_seen"`                 // unix timestamp, nil = never
-	AgeSec         int    `json:"age_sec"`                   // seconds since last seen
-	ScriptOutdated bool   `json:"script_outdated,omitempty"` // true if router script != server script
+	LastSeen       *int64   `json:"last_seen"`                 // unix timestamp, nil = never
+	AgeSec         int      `json:"age_sec"`                   // seconds since last seen
+	ScriptOutdated bool     `json:"script_outdated,omitempty"` // true if router script != server script
+	SeenParams     []string `json:"seen_params,omitempty"`     // hook tags present on the router
 }
 
 func (h *Heartbeat) Info() heartbeatResponse {
@@ -49,10 +54,13 @@ func (h *Heartbeat) Info() heartbeatResponse {
 	}
 	ts := h.lastSeen.Unix()
 	outdated := h.serverVersion != "" && h.routerVersion != h.serverVersion
+	seen := make([]string, len(h.seenParams))
+	copy(seen, h.seenParams)
 	return heartbeatResponse{
 		LastSeen:       &ts,
 		AgeSec:         int(time.Since(h.lastSeen).Seconds()),
 		ScriptOutdated: outdated,
+		SeenParams:     seen,
 	}
 }
 
@@ -131,7 +139,9 @@ func main() {
 	mux.HandleFunc("POST /api/templates/import", func(w http.ResponseWriter, r *http.Request) {
 		handleImportTemplates(w, r, store, audit)
 	})
-	mux.HandleFunc("GET /mikrotik/templates.rsc", handleTemplatesRsc)
+	mux.HandleFunc("GET /mikrotik/templates.rsc", func(w http.ResponseWriter, r *http.Request) {
+		handleTemplatesRsc(w, r, store)
+	})
 
 	mux.HandleFunc("GET /api/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

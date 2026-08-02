@@ -247,6 +247,32 @@ func TestImportTemplatesPreservesState(t *testing.T) {
 	}
 }
 
+func TestImportedTemplatesAndHash(t *testing.T) {
+	params := map[string]Param{
+		"roblox":    {Kind: KindService},
+		"vpn-block": {Kind: KindService}, // not in catalog
+	}
+	imported := importedTemplates(params)
+	if len(imported) != 1 || imported[0].ID != "roblox" {
+		t.Fatalf("importedTemplates = %v, want [roblox]", imported)
+	}
+
+	h1 := templatesHash(imported)
+	if len(h1) != 12 {
+		t.Errorf("hash length = %d, want 12", len(h1))
+	}
+	if h2 := templatesHash(imported); h2 != h1 {
+		t.Error("hash must be stable for the same set")
+	}
+	params["youtube"] = Param{Kind: KindService}
+	if h3 := templatesHash(importedTemplates(params)); h3 == h1 {
+		t.Error("hash must change when the imported set changes")
+	}
+	if templatesHash(nil) != "" {
+		t.Error("empty set must produce empty hash (field omitted for router)")
+	}
+}
+
 func TestDeleteGroupOnlyWhenEmpty(t *testing.T) {
 	s := newTestStore(t)
 	s.AddParam("roblox", "", KindService, "games")

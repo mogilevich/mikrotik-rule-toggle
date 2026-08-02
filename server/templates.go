@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 )
@@ -75,6 +77,28 @@ func selectTemplates(ids []string) []ServiceTemplate {
 		}
 	}
 	return out
+}
+
+// importedTemplates returns catalog entries whose param exists in the app.
+// Catalog order → stable render → stable hash.
+func importedTemplates(params map[string]Param) []ServiceTemplate {
+	var out []ServiceTemplate
+	for _, t := range templateCatalog {
+		if _, ok := params[t.ID]; ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// templatesHash fingerprints the rendered import script. The router compares
+// it against the last applied hash and re-imports only on change.
+func templatesHash(templates []ServiceTemplate) string {
+	if len(templates) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(renderTemplatesRsc(templates)))
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 // renderTemplatesRsc generates an idempotent RouterOS 7 import script that

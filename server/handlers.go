@@ -37,15 +37,22 @@ func handleGetState(w http.ResponseWriter, r *http.Request, store *Store, hb *He
 		writeState(w, store)
 		return
 	}
-	hb.Touch(r.Header.Get("X-Script-Version"))
+	var seen []string
+	if h := r.Header.Get("X-Seen-Params"); h != "" {
+		seen = strings.Split(h, ",")
+	}
+	hb.Touch(r.Header.Get("X-Script-Version"), seen)
 	store.ActivatePendingTimers()
 	// Router view: params only — the .rsc JSON parser searches substrings,
-	// extra top-level keys (groups/presets) must not reach it
+	// extra top-level keys (groups/presets) must not reach it. params go
+	// first so param-name lookups never land on the fields below.
 	w.Header().Set("Content-Type", "application/json")
+	params := store.GetState().Params
 	resp := struct {
-		Params       map[string]Param `json:"params"`
-		ScriptUpdate bool             `json:"script_update,omitempty"`
-	}{store.GetState().Params, hb.IsScriptOutdated()}
+		Params        map[string]Param `json:"params"`
+		TemplatesHash string           `json:"templates_hash,omitempty"`
+		ScriptUpdate  bool             `json:"script_update,omitempty"`
+	}{params, templatesHash(importedTemplates(params)), hb.IsScriptOutdated()}
 	json.NewEncoder(w).Encode(resp)
 }
 
@@ -280,13 +287,20 @@ func handleImportTemplates(w http.ResponseWriter, r *http.Request, store *Store,
 	writeState(w, store)
 }
 
-// handleTemplatesRsc serves the RouterOS import script (?ids=a,b,c to filter).
-func handleTemplatesRsc(w http.ResponseWriter, r *http.Request) {
-	var ids []string
-	if q := r.URL.Query().Get("ids"); q != "" {
-		ids = strings.Split(q, ",")
+// handleTemplatesRsc serves the RouterOS import script.
+// ?imported=1 — only templates imported into the app (router auto-import),
+// ?ids=a,b,c — explicit filter, otherwise the whole catalog.
+func handleTemplatesRsc(w http.ResponseWriter, r *http.Request, store *Store) {
+	var templates []ServiceTemplate
+	if r.URL.Query().Get("imported") != "" {
+		templates = importedTemplates(store.GetState().Params)
+	} else {
+		var ids []string
+		if q := r.URL.Query().Get("ids"); q != "" {
+			ids = strings.Split(q, ",")
+		}
+		templates = selectTemplates(ids)
 	}
-	templates := selectTemplates(ids)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	fmt.Fprint(w, renderTemplatesRsc(templates))
 }
