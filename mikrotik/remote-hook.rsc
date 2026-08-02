@@ -26,7 +26,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "23"
+:local scriptVersion "24"
 
 # Set by applyRule when a /ip/dns/static entry actually changes state.
 # Used after the main scan to flush DNS cache at most once per cycle.
@@ -456,6 +456,49 @@
             :log info "remote-hook: flushed DNS cache after dns/static toggle"
         } on-error={
             :log warning "remote-hook: failed to flush DNS cache"
+        }
+    }
+
+    # --- Sync kids-devices address-list from kid-control ---
+    # Kids are kid-control users named "hook:*"; their devices are bound by
+    # MAC, IPs come from DHCP leases (incl. reservations of offline devices).
+    # Synced entries carry comment "kc:auto"; manual entries are never touched.
+    :local kidsDesired [:toarray ""]
+    :foreach kdev in=[/ip/kid-control/device find where user~"hook:"] do={
+        :local kmac ""
+        :do { :set kmac [:tostr [/ip/kid-control/device get $kdev mac-address]] } on-error={}
+        :if ([:len $kmac] > 0) do={
+            :foreach klease in=[/ip/dhcp-server/lease find where mac-address=$kmac] do={
+                :local kip ""
+                :do { :set kip [:tostr [/ip/dhcp-server/lease get $klease address]] } on-error={}
+                :if ([:len $kip] > 0) do={
+                    :set kidsDesired [$appendUnique arr=$kidsDesired item=$kip]
+                }
+            }
+        }
+    }
+    :foreach kentry in=[/ip/firewall/address-list find where list="kids-devices" && comment="kc:auto"] do={
+        :local kaddr ""
+        :do { :set kaddr [:tostr [/ip/firewall/address-list get $kentry address]] } on-error={}
+        :local kkeep false
+        :foreach kd in=$kidsDesired do={
+            :if ($kd = $kaddr) do={ :set kkeep true }
+        }
+        :if (!$kkeep) do={
+            :do {
+                /ip/firewall/address-list remove $kentry
+                :log info "remote-hook: kids-devices removed stale $kaddr"
+            } on-error={}
+        }
+    }
+    :foreach kd in=$kidsDesired do={
+        :if ([:len $kd] > 0) do={
+            :if ([:len [/ip/firewall/address-list find where list="kids-devices" && address=$kd]] = 0) do={
+                :do {
+                    /ip/firewall/address-list add list=kids-devices address=$kd comment="kc:auto"
+                    :log info "remote-hook: kids-devices added $kd"
+                } on-error={}
+            }
         }
     }
 

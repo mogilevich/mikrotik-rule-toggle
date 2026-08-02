@@ -76,6 +76,7 @@ Single `main` package, no internal packages. Static files embedded via `//go:emb
 - Avoid `&&`/`||` with possibly-unset globals — RouterOS does not short-circuit; nested `:if` only, like the `remoteHookLock` check
 - Auto-update applies a downloaded script only if it contains the `# remote-hook EOF` end marker (truncation guard); keep that comment as the literal last line
 - Template auto-import: server sends `templates_hash` (fingerprint of templates.rsc rendered for app-imported services) in the router response; script keeps the last applied hash in a global and on mismatch fetches `/mikrotik/templates.rsc?imported=1` + `/import`s it (idempotent). Global is wiped on reboot → one harmless re-import
+- Template rules are kid-scoped: drop rules carry `src-address-list=kids-devices`; the script syncs that list every cycle from kid-control devices bound to `hook:*` users (MAC → DHCP lease → IP), marking its entries `kc:auto` (manual entries untouched). Templates create NO dns/static entries — NXDOMAIN is LAN-wide and poisons the router's own FQDN address-list resolution; the generated script removes legacy ones and adds the missing src scope (migration)
 - Rule inventory: script collects all `hook:` tags found during the scan and reports them NEXT cycle via `X-Seen-Params` header; server exposes them in `/api/heartbeat` (`seen_params`), UI flags params missing on the router
 
 ## Key Design Decisions

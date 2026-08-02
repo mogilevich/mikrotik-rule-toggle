@@ -212,13 +212,17 @@ func TestRenderTemplatesRsc(t *testing.T) {
 	rsc := renderTemplatesRsc(selectTemplates([]string{"roblox"}))
 	for _, want := range []string{
 		`list=blocked-roblox address=roblox.com`,
-		`/ip/dns/static add name=roblox.com type=NXDOMAIN match-subdomain=yes comment="hook:roblox" disabled=yes`,
 		`address=128.116.0.0/17`,
-		`dst-address-list=blocked-roblox action=drop comment="hook:roblox" disabled=yes`,
+		`src-address-list=kids-devices dst-address-list=blocked-roblox action=drop comment="hook:roblox" disabled=yes`,
+		`/ip/dns/static remove [find where comment="hook:roblox"]`,
+		`!src-address-list] src-address-list=kids-devices`,
 	} {
 		if !strings.Contains(rsc, want) {
 			t.Errorf("rsc missing %q", want)
 		}
+	}
+	if strings.Contains(rsc, "/ip/dns/static add") {
+		t.Error("templates must not create LAN-wide dns/static entries")
 	}
 	if strings.Contains(rsc, "hook:youtube") {
 		t.Error("filtered rsc must not contain other templates")
