@@ -79,7 +79,7 @@ func main() {
 	audit := NewAuditLog(filepath.Join(dataDir, "audit.json"), 2000)
 	hb := &Heartbeat{serverVersion: extractScriptVersion("/mikrotik/remote-hook.rsc")}
 
-	// Background ticker: re-enable params whose timer has expired
+	// Background ticker: revert params whose timer has expired
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		for range ticker.C {
@@ -91,60 +91,51 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// API routes
-	mux.HandleFunc("/api/state", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			handleGetState(w, r, store, hb)
-		case http.MethodPost:
-			handleSetState(w, r, store, audit)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
+	mux.HandleFunc("GET /api/state", func(w http.ResponseWriter, r *http.Request) {
+		handleGetState(w, r, store, hb)
+	})
+	mux.HandleFunc("POST /api/state", func(w http.ResponseWriter, r *http.Request) {
+		handleSetState(w, r, store, audit)
+	})
+	mux.HandleFunc("POST /api/group", func(w http.ResponseWriter, r *http.Request) {
+		handleSetGroup(w, r, store, audit)
+	})
+	mux.HandleFunc("POST /api/timer", func(w http.ResponseWriter, r *http.Request) {
+		handleTimer(w, r, store, audit)
+	})
+	mux.HandleFunc("POST /api/pause", func(w http.ResponseWriter, r *http.Request) {
+		handlePause(w, r, store, audit)
+	})
+	mux.HandleFunc("POST /api/resume", func(w http.ResponseWriter, r *http.Request) {
+		handleResume(w, r, store, audit)
+	})
+	mux.HandleFunc("POST /api/preset", func(w http.ResponseWriter, r *http.Request) {
+		handleApplyPreset(w, r, store, audit)
+	})
+	mux.HandleFunc("POST /api/params", func(w http.ResponseWriter, r *http.Request) {
+		handleAddParam(w, r, store, audit)
+	})
+	mux.HandleFunc("DELETE /api/params", func(w http.ResponseWriter, r *http.Request) {
+		handleDeleteParam(w, r, store, audit)
+	})
+	mux.HandleFunc("POST /api/groups", func(w http.ResponseWriter, r *http.Request) {
+		handleAddGroup(w, r, store)
+	})
+	mux.HandleFunc("DELETE /api/groups", func(w http.ResponseWriter, r *http.Request) {
+		handleDeleteGroup(w, r, store)
 	})
 
-	mux.HandleFunc("/api/heartbeat", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
+	mux.HandleFunc("GET /api/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(hb.Info())
 	})
 
-	mux.HandleFunc("/api/timer", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		handleTimer(w, r, store, audit)
-	})
-
-	mux.HandleFunc("/api/params", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			handleAddParam(w, r, store, audit)
-		case http.MethodDelete:
-			handleDeleteParam(w, r, store, audit)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	mux.HandleFunc("/api/log", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
+	mux.HandleFunc("GET /api/log", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(audit.Recent(50))
 	})
 
-	mux.HandleFunc("/api/stats", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
+	mux.HandleFunc("GET /api/stats", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		daysStr := r.URL.Query().Get("days")
 		if daysStr != "" {
@@ -189,147 +180,6 @@ func main() {
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
-}
-
-func withAuth(token string, next http.Handler) http.Handler {
-	if token == "" {
-		return next
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			auth := r.Header.Get("Authorization")
-			if auth != "Bearer "+token {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
-				return
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func handleGetState(w http.ResponseWriter, r *http.Request, store *Store, hb *Heartbeat) {
-	// Detect MikroTik fetch by User-Agent
-	ua := r.Header.Get("User-Agent")
-	isMikroTik := strings.Contains(strings.ToLower(ua), "mikrotik") || strings.Contains(strings.ToLower(ua), "routeros")
-	if isMikroTik {
-		hb.Touch(r.Header.Get("X-Script-Version"))
-		store.ActivatePendingTimers()
-	}
-	w.Header().Set("Content-Type", "application/json")
-	if isMikroTik && hb.IsScriptOutdated() {
-		// Wrap state with update signal for router
-		json.NewEncoder(w).Encode(struct {
-			State
-			ScriptUpdate bool `json:"script_update"`
-		}{store.GetState(), true})
-	} else {
-		json.NewEncoder(w).Encode(store.GetState())
-	}
-}
-
-type setStateReq struct {
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
-}
-
-func handleSetState(w http.ResponseWriter, r *http.Request, store *Store, audit *AuditLog) {
-	var req setStateReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if req.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
-		return
-	}
-	if !store.SetParam(req.Name, req.Enabled) {
-		http.Error(w, "param not found", http.StatusNotFound)
-		return
-	}
-	if req.Enabled {
-		audit.Add(req.Name, "toggle", "включён")
-	} else {
-		audit.Add(req.Name, "toggle", "выключен")
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(store.GetState())
-}
-
-type timerReq struct {
-	Name    string `json:"name"`
-	Minutes int    `json:"minutes"`
-}
-
-func handleTimer(w http.ResponseWriter, r *http.Request, store *Store, audit *AuditLog) {
-	var req timerReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if req.Name == "" || req.Minutes <= 0 {
-		http.Error(w, "name and minutes (>0) are required", http.StatusBadRequest)
-		return
-	}
-	found, extended := store.TempRelease(req.Name, time.Duration(req.Minutes)*time.Minute)
-	if !found {
-		http.Error(w, "param not found", http.StatusNotFound)
-		return
-	}
-	if extended {
-		audit.Add(req.Name, "timer", "+"+formatDuration(req.Minutes))
-	} else {
-		audit.Add(req.Name, "timer", formatDuration(req.Minutes))
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(store.GetState())
-}
-
-func formatDuration(minutes int) string {
-	switch {
-	case minutes < 60:
-		return fmt.Sprintf("на %d мин", minutes)
-	case minutes%60 == 0:
-		return fmt.Sprintf("на %d ч", minutes/60)
-	default:
-		return fmt.Sprintf("на %dч %dм", minutes/60, minutes%60)
-	}
-}
-
-type addParamReq struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Inverted    bool   `json:"inverted"`
-}
-
-func handleAddParam(w http.ResponseWriter, r *http.Request, store *Store, audit *AuditLog) {
-	var req addParamReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if req.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
-		return
-	}
-	store.AddParam(req.Name, req.Description, req.Inverted)
-	audit.Add(req.Name, "add", "создан")
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(store.GetState())
-}
-
-func handleDeleteParam(w http.ResponseWriter, r *http.Request, store *Store, audit *AuditLog) {
-	name := r.URL.Query().Get("name")
-	if name == "" {
-		http.Error(w, "name query param is required", http.StatusBadRequest)
-		return
-	}
-	if !store.DeleteParam(name) {
-		http.Error(w, "param not found", http.StatusNotFound)
-		return
-	}
-	audit.Add(name, "delete", "удалён")
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(store.GetState())
 }
 
 func envOrDefault(key, def string) string {

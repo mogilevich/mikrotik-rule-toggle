@@ -478,6 +478,129 @@
   .chart-labels span { flex: 1; text-align: center; font-size: 10px; color: var(--text3); overflow: hidden; }
   .chart-empty { text-align: center; color: var(--text3); font-size: 14px; padding: 20px 0; }
 
+  /* Preset chips */
+  .preset-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .preset-row::-webkit-scrollbar { display: none; }
+  .preset-chip {
+    background: rgba(0,122,255,.1);
+    color: var(--blue);
+    border: none;
+    padding: 0 14px;
+    height: 36px;
+    border-radius: 18px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-family: -apple-system, sans-serif;
+  }
+  .preset-chip:active { opacity: .6; }
+
+  /* Group blocks */
+  .group-block { margin-bottom: 18px; }
+  .group-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 2px 4px 8px;
+  }
+  .group-header .info { flex: 1; min-width: 0; }
+  .group-title { font-size: 17px; font-weight: 700; color: var(--text1); }
+  .group-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
+  .group-actions {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    margin: 0 0 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .group-actions::-webkit-scrollbar { display: none; }
+  .group-actions button {
+    background: rgba(255,149,0,.12);
+    color: var(--orange);
+    border: none;
+    padding: 0 11px;
+    height: 30px;
+    border-radius: 15px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-family: -apple-system, sans-serif;
+  }
+  .group-actions button:active { opacity: .6; }
+  .group-actions .label {
+    font-size: 12px;
+    color: var(--text3);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .group-actions button.pause {
+    background: rgba(255,59,48,.1);
+    color: var(--red);
+  }
+  .group-actions button.resume {
+    background: rgba(52,199,89,.12);
+    color: var(--green);
+  }
+
+  /* Toggle: mixed group state */
+  .toggle input:indeterminate + .slider { background: var(--orange); }
+  .toggle input:indeterminate + .slider::before { transform: translateX(10px); }
+
+  /* Add form selects */
+  .add-form select {
+    width: 100%;
+    padding: 11px 14px;
+    border: 1.5px solid var(--sep);
+    border-radius: 10px;
+    margin-bottom: 8px;
+    font-size: 15px;
+    background: var(--bg);
+    color: var(--text1);
+    font-family: -apple-system, sans-serif;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  .add-form select:focus { outline: none; border-color: var(--blue); }
+  .kind-tabs {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 8px;
+    background: rgba(60,60,67,.08);
+    border-radius: 9px;
+    padding: 2px;
+  }
+  .kind-tabs button {
+    flex: 1;
+    background: none;
+    border: none;
+    padding: 8px 0;
+    border-radius: 7px;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text2);
+    font-family: -apple-system, sans-serif;
+  }
+  .kind-tabs button.active {
+    background: var(--card);
+    color: var(--text1);
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0,0,0,.1);
+  }
+
   /* Time picker modal */
   .modal-overlay {
     position: fixed;
@@ -576,6 +699,7 @@
     </div>
   </div>
 
+  <div id="presets" class="preset-row"></div>
   <div id="params"></div>
 
   <details class="section" id="log-section">
@@ -605,9 +729,11 @@
         <input type="text" id="new-name" placeholder="block-social" />
       </div>
       <input type="text" id="new-desc" placeholder="Description" />
-      <label class="checkbox-label">
-        <input type="checkbox" id="new-inverted" /> Kid-control (inverted logic)
-      </label>
+      <div class="kind-tabs" id="new-kind">
+        <button type="button" data-kind="service" class="active" onclick="selectKind('service')">Service</button>
+        <button type="button" data-kind="device" onclick="selectKind('device')">Device (kid-control)</button>
+      </div>
+      <select id="new-group"></select>
       <button onclick="addParam()">Add</button>
     </div>
   </details>
@@ -650,8 +776,33 @@ const T = {
     days_7: "7 days",
     days_30: "30 days",
     placeholder_desc: "Description",
-    kidcontrol_label: "Kid-control (inverted logic)",
+    kind_service: "Service",
+    kind_device: "Device (kid-control)",
+    group_none: "No group",
+    group_new: "+ New group…",
+    group_new_id: "Group id (latin, e.g. games):",
+    group_new_title: "Group title:",
     btn_add: "Add",
+    section_devices: "Devices",
+    section_other: "Other",
+    group_games: "Games",
+    group_video: "Video & streaming",
+    group_social: "Social",
+    preset_homework: "📚 Homework",
+    "preset_free-hour": "🎉 Free hour",
+    pause_all: "Pause all:",
+    resume_all: "Resume",
+    unblock_group: "Allow:",
+    services_count: "{0} services",
+    devices_count: "{0} devices",
+    group_all_blocked: "all blocked",
+    group_all_allowed: "all allowed",
+    group_mixed: "mixed",
+    status_dev_allowed: "unrestricted",
+    status_dev_restricted: "restricted",
+    status_paused: "paused",
+    status_temp_blocked: "temp. blocked",
+    type_device: "device",
     err_status: "Error: {0}",
     err_connect: "Could not connect",
     empty_params: "No parameters",
@@ -709,8 +860,33 @@ const T = {
     days_7: "7 дней",
     days_30: "30 дней",
     placeholder_desc: "Описание",
-    kidcontrol_label: "Kid-control (инверт. логика)",
+    kind_service: "Сервис",
+    kind_device: "Устройство (kid-control)",
+    group_none: "Без группы",
+    group_new: "+ Новая группа…",
+    group_new_id: "ID группы (латиницей, напр. games):",
+    group_new_title: "Название группы:",
     btn_add: "Добавить",
+    section_devices: "Устройства",
+    section_other: "Прочее",
+    group_games: "Игры",
+    group_video: "Видео и стриминг",
+    group_social: "Соцсети",
+    preset_homework: "📚 Уроки",
+    "preset_free-hour": "🎉 Свободный час",
+    pause_all: "Пауза всем:",
+    resume_all: "Возобновить",
+    unblock_group: "Разрешить:",
+    services_count: "{0} серв.",
+    devices_count: "{0} устр.",
+    group_all_blocked: "всё заблокировано",
+    group_all_allowed: "всё разрешено",
+    group_mixed: "частично",
+    status_dev_allowed: "доступ открыт",
+    status_dev_restricted: "ограничения активны",
+    status_paused: "пауза",
+    status_temp_blocked: "врем. блок",
+    type_device: "устройство",
     err_status: "Ошибка: {0}",
     err_connect: "Не удалось подключиться",
     empty_params: "Нет параметров",
@@ -770,6 +946,9 @@ function t(key, ...args) {
 
 let authToken = localStorage.getItem("hook-token") || "";
 let currentParams = {};
+let currentGroups = {};
+let currentPresets = {};
+let newParamKind = "service";
 document.getElementById("token").value = authToken;
 
 function applyStaticI18n() {
@@ -785,12 +964,9 @@ function applyStaticI18n() {
   if (tabs[2]) tabs[2].textContent = t("days_30");
   const desc = document.getElementById("new-desc");
   if (desc) desc.placeholder = t("placeholder_desc");
-  const kidLabel = document.querySelector(".checkbox-label");
-  if (kidLabel) {
-    const cb = kidLabel.querySelector("input");
-    kidLabel.textContent = " " + t("kidcontrol_label");
-    kidLabel.insertBefore(cb, kidLabel.firstChild);
-  }
+  const kindTabs = document.querySelectorAll("#new-kind button");
+  if (kindTabs[0]) kindTabs[0].textContent = t("kind_service");
+  if (kindTabs[1]) kindTabs[1].textContent = t("kind_device");
   const addBtn = document.querySelector(".add-form > button");
   if (addBtn) addBtn.textContent = t("btn_add");
   document.querySelector("#time-picker-modal .modal-title").textContent = t("until_when");
@@ -812,13 +988,18 @@ function headers() {
   return h;
 }
 
+function applyState(data) {
+  currentParams = data.params || {};
+  currentGroups = data.groups || {};
+  currentPresets = data.presets || {};
+  render();
+}
+
 async function loadState() {
   try {
     const res = await fetch("/api/state", {headers: headers()});
     if (!res.ok) { document.getElementById("params").innerHTML = '<div class="empty">' + esc(t("err_status", res.status)) + '</div>'; return; }
-    const data = await res.json();
-    currentParams = data.params || {};
-    render(currentParams);
+    applyState(await res.json());
   } catch (e) {
     document.getElementById("params").innerHTML = '<div class="empty">' + esc(t("err_connect")) + '</div>';
   }
@@ -833,90 +1014,209 @@ function formatCountdown(seconds) {
   return m + ":" + String(s).padStart(2, "0");
 }
 
-function render(params) {
-  const el = document.getElementById("params");
-  const keys = Object.keys(params).sort();
-  if (!keys.length) { el.innerHTML = '<div class="empty">' + esc(t("empty_params")) + '</div>'; return; }
-  el.innerHTML = keys.map(k => {
-    const p = params[k];
-    const inv = p.inverted;
-    const hasPending = p.timer_duration && !p.disabled_until;
-    const hasTimer = (p.disabled_until || hasPending) && (inv ? p.enabled : !p.enabled);
+function isDevice(p) { return p.kind ? p.kind === "device" : p.inverted; }
 
-    let stateClass, badgeClass, badgeText;
-    if (hasTimer) {
-      stateClass = "timed";
-      badgeClass = "timer";
-      badgeText = inv ? t("status_temp_off") : t("status_temp_on");
-    } else if (p.enabled) {
-      stateClass = inv ? "inactive" : "active";
-      badgeClass = inv ? "allowed" : "blocked";
-      badgeText = inv ? t("status_off") : t("status_blocked");
-    } else {
-      stateClass = inv ? "active" : "inactive";
-      badgeClass = inv ? "blocked" : "allowed";
-      badgeText = inv ? t("status_on") : t("status_allowed");
-    }
+function groupTitle(id) {
+  const g = currentGroups[id];
+  if (g && g.title) return g.title;
+  const key = "group_" + id;
+  return (T[LANG] && T[LANG][key]) || T.en[key] ? t(key) : id;
+}
 
-    const toggleTitle = inv
-      ? (p.enabled ? t("toggle_enable") : t("toggle_disable"))
-      : (p.enabled ? t("toggle_allow") : t("toggle_block"));
+function presetTitle(id) {
+  const p = currentPresets[id];
+  if (p && p.title) return p.title;
+  const key = "preset_" + id;
+  return (T[LANG] && T[LANG][key]) || T.en[key] ? t(key) : id;
+}
 
-    const showTimerButtons = inv ? !p.enabled : p.enabled;
+function renderCard(k, p) {
+  const inv = isDevice(p);
+  const hasPending = p.timer_duration && !p.disabled_until;
+  const hasTimer = !!(p.disabled_until || hasPending);
+  const blocked = inv ? !p.enabled : p.enabled;
 
-    const uM = t("minute_short");
-    const uH = t("hour_short");
-    let timerRow = "";
-    if (hasPending) {
-      timerRow = `<div class="timer-row timer-active">
-        <span class="countdown pending">${esc(t("waiting_router"))}</span>
-        <button class="cancel" onclick="cancelTimer('${esc(k)}')">${esc(t("btn_cancel"))}</button>
-      </div>
-      <div class="timer-row extend-row">
-        <button onclick="setTimer('${esc(k)}', 5)">+5${uM}</button>
-        <button onclick="setTimer('${esc(k)}', 15)">+15${uM}</button>
-        <button onclick="setTimer('${esc(k)}', 30)">+30${uM}</button>
-        <button onclick="setTimer('${esc(k)}', 60)">+1${uH}</button>
-        <button onclick="setTimer('${esc(k)}', 180)">+3${uH}</button>
-      </div>`;
-    } else if (hasTimer) {
-      timerRow = `<div class="timer-row timer-active">
-        <span class="countdown" data-until="${p.disabled_until}"></span>
-        <button class="cancel" onclick="cancelTimer('${esc(k)}')">${esc(t("btn_revert"))}</button>
-      </div>
-      <div class="timer-row extend-row">
-        <button onclick="setTimer('${esc(k)}', 5)">+5${uM}</button>
-        <button onclick="setTimer('${esc(k)}', 15)">+15${uM}</button>
-        <button onclick="setTimer('${esc(k)}', 30)">+30${uM}</button>
-        <button onclick="setTimer('${esc(k)}', 60)">+1${uH}</button>
-        <button onclick="setTimer('${esc(k)}', 180)">+3${uH}</button>
-      </div>`;
-    } else if (showTimerButtons) {
-      timerRow = `<div class="timer-row">
-        <button onclick="setTimer('${esc(k)}', 5)">5${uM}</button>
-        <button onclick="setTimer('${esc(k)}', 15)">15${uM}</button>
-        <button onclick="setTimer('${esc(k)}', 30)">30${uM}</button>
-        <button onclick="setTimer('${esc(k)}', 60)">1${uH}</button>
-        <button onclick="setTimer('${esc(k)}', 180)">3${uH}</button>
-        <button type="button" onclick="pickUntilTime('${esc(k)}')" title="${esc(t("picker_tooltip"))}">⏰ …</button>
-      </div>`;
-    }
+  let stateClass, badgeClass, badgeText;
+  if (hasTimer && !blocked) {
+    stateClass = "timed";
+    badgeClass = "timer";
+    badgeText = inv ? t("status_temp_off") : t("status_temp_on");
+  } else if (hasTimer && blocked) {
+    // temp-restrict (device pause / delayed block)
+    stateClass = "timed";
+    badgeClass = "timer";
+    badgeText = inv ? t("status_paused") : t("status_temp_blocked");
+  } else if (blocked) {
+    stateClass = "active";
+    badgeClass = "blocked";
+    badgeText = inv ? t("status_dev_restricted") : t("status_blocked");
+  } else {
+    stateClass = "inactive";
+    badgeClass = "allowed";
+    badgeText = inv ? t("status_dev_allowed") : t("status_allowed");
+  }
 
-    const typeLabel = inv ? '<span class="type-label">kid-control</span>' : '';
+  const toggleTitle = inv
+    ? (p.enabled ? t("toggle_enable") : t("toggle_disable"))
+    : (p.enabled ? t("toggle_allow") : t("toggle_block"));
 
-    return `<div class="card ${stateClass}">
-      <div class="card-top">
-        <div class="info">
-          <div class="name">${esc(k)}${typeLabel}</div>
-          <div class="desc">${esc(p.description)}</div>
-          <div class="badge-row"><span class="status-badge ${badgeClass}">${badgeText}</span></div>
-        </div>
-        <label class="toggle" title="${toggleTitle}"><input type="checkbox" ${p.enabled ? "checked" : ""} onchange="toggle('${esc(k)}', this.checked)"><span class="slider"></span></label>
-        <button class="delete-btn" onclick="deleteParam('${esc(k)}')" title="${esc(t("delete_tooltip"))}">&times;</button>
-      </div>
-      ${timerRow}
+  const showTimerButtons = blocked;
+
+  const uM = t("minute_short");
+  const uH = t("hour_short");
+  let timerRow = "";
+  if (hasPending) {
+    timerRow = `<div class="timer-row timer-active">
+      <span class="countdown pending">${esc(t("waiting_router"))}</span>
+      <button class="cancel" onclick="cancelTimer('${esc(k)}')">${esc(t("btn_cancel"))}</button>
+    </div>
+    <div class="timer-row extend-row">
+      <button onclick="setTimer('${esc(k)}', 5)">+5${uM}</button>
+      <button onclick="setTimer('${esc(k)}', 15)">+15${uM}</button>
+      <button onclick="setTimer('${esc(k)}', 30)">+30${uM}</button>
+      <button onclick="setTimer('${esc(k)}', 60)">+1${uH}</button>
+      <button onclick="setTimer('${esc(k)}', 180)">+3${uH}</button>
     </div>`;
-  }).join("");
+  } else if (hasTimer) {
+    timerRow = `<div class="timer-row timer-active">
+      <span class="countdown" data-until="${p.disabled_until}"></span>
+      <button class="cancel" onclick="cancelTimer('${esc(k)}')">${esc(t("btn_revert"))}</button>
+    </div>
+    <div class="timer-row extend-row">
+      <button onclick="setTimer('${esc(k)}', 5)">+5${uM}</button>
+      <button onclick="setTimer('${esc(k)}', 15)">+15${uM}</button>
+      <button onclick="setTimer('${esc(k)}', 30)">+30${uM}</button>
+      <button onclick="setTimer('${esc(k)}', 60)">+1${uH}</button>
+      <button onclick="setTimer('${esc(k)}', 180)">+3${uH}</button>
+    </div>`;
+  } else if (showTimerButtons) {
+    timerRow = `<div class="timer-row">
+      <button onclick="setTimer('${esc(k)}', 5)">5${uM}</button>
+      <button onclick="setTimer('${esc(k)}', 15)">15${uM}</button>
+      <button onclick="setTimer('${esc(k)}', 30)">30${uM}</button>
+      <button onclick="setTimer('${esc(k)}', 60)">1${uH}</button>
+      <button onclick="setTimer('${esc(k)}', 180)">3${uH}</button>
+      <button type="button" onclick="pickUntilTime('${esc(k)}')" title="${esc(t("picker_tooltip"))}">⏰ …</button>
+    </div>`;
+  }
+
+  const typeLabel = inv ? '<span class="type-label">' + esc(t("type_device")) + '</span>' : '';
+
+  return `<div class="card ${stateClass}">
+    <div class="card-top">
+      <div class="info">
+        <div class="name">${esc(k)}${typeLabel}</div>
+        <div class="desc">${esc(p.description)}</div>
+        <div class="badge-row"><span class="status-badge ${badgeClass}">${badgeText}</span></div>
+      </div>
+      <label class="toggle" title="${toggleTitle}"><input type="checkbox" ${blocked ? "checked" : ""} onchange="toggleCard('${esc(k)}', this.checked)"><span class="slider"></span></label>
+      <button class="delete-btn" onclick="deleteParam('${esc(k)}')" title="${esc(t("delete_tooltip"))}">&times;</button>
+    </div>
+    ${timerRow}
+  </div>`;
+}
+
+function renderDevicesBlock(keys) {
+  const anyPaused = keys.some(k => {
+    const p = currentParams[k];
+    return !p.enabled && (p.disabled_until || p.timer_duration) && p.revert_enabled;
+  });
+  const uM = t("minute_short");
+  const uH = t("hour_short");
+  const resumeBtn = anyPaused ? `<button class="resume" onclick="resumeAll()">${esc(t("resume_all"))}</button>` : "";
+  return `<div class="group-block">
+    <div class="group-header">
+      <div class="info">
+        <div class="group-title">${esc(t("section_devices"))}</div>
+        <div class="group-sub">${esc(t("devices_count", keys.length))}</div>
+      </div>
+    </div>
+    <div class="group-actions">
+      <span class="label">${esc(t("pause_all"))}</span>
+      <button class="pause" onclick="pauseAll(30)">30${uM}</button>
+      <button class="pause" onclick="pauseAll(60)">1${uH}</button>
+      <button class="pause" onclick="pauseAll(180)">3${uH}</button>
+      ${resumeBtn}
+    </div>
+    ${keys.map(k => renderCard(k, currentParams[k])).join("")}
+  </div>`;
+}
+
+function renderGroupBlock(gid, keys) {
+  const total = keys.length;
+  const blockedCount = keys.filter(k => currentParams[k].enabled).length;
+  let subState, toggleState;
+  if (blockedCount === total) { subState = t("group_all_blocked"); toggleState = "all"; }
+  else if (blockedCount === 0) { subState = t("group_all_allowed"); toggleState = "none"; }
+  else { subState = t("group_mixed") + ` (${blockedCount}/${total})`; toggleState = "mixed"; }
+
+  const uM = t("minute_short");
+  const uH = t("hour_short");
+  let actions = "";
+  if (blockedCount > 0) {
+    actions = `<div class="group-actions">
+      <span class="label">${esc(t("unblock_group"))}</span>
+      <button onclick="groupTimer('${esc(gid)}', 15)">15${uM}</button>
+      <button onclick="groupTimer('${esc(gid)}', 30)">30${uM}</button>
+      <button onclick="groupTimer('${esc(gid)}', 60)">1${uH}</button>
+      <button onclick="groupTimer('${esc(gid)}', 180)">3${uH}</button>
+    </div>`;
+  }
+
+  return `<div class="group-block">
+    <div class="group-header">
+      <div class="info">
+        <div class="group-title">${esc(groupTitle(gid))}</div>
+        <div class="group-sub">${esc(t("services_count", total))} · ${esc(subState)}</div>
+      </div>
+      <label class="toggle"><input type="checkbox" data-group-toggle="${esc(gid)}" ${toggleState === "all" ? "checked" : ""} onchange="toggleGroup('${esc(gid)}', this.checked)"><span class="slider"></span></label>
+    </div>
+    ${actions}
+    ${keys.map(k => renderCard(k, currentParams[k])).join("")}
+  </div>`;
+}
+
+function renderPresets() {
+  const el = document.getElementById("presets");
+  const ids = Object.keys(currentPresets).sort((a, b) => (currentPresets[a].order || 0) - (currentPresets[b].order || 0));
+  el.innerHTML = ids.map(id =>
+    `<button class="preset-chip" onclick="applyPreset('${esc(id)}')">${esc(presetTitle(id))}</button>`
+  ).join("");
+}
+
+function render() {
+  renderPresets();
+  populateGroupSelect();
+  const el = document.getElementById("params");
+  const keys = Object.keys(currentParams).sort();
+  if (!keys.length) { el.innerHTML = '<div class="empty">' + esc(t("empty_params")) + '</div>'; return; }
+
+  const devices = keys.filter(k => isDevice(currentParams[k]));
+  const services = keys.filter(k => !isDevice(currentParams[k]));
+  const groupIds = Object.keys(currentGroups).sort((a, b) => (currentGroups[a].order || 0) - (currentGroups[b].order || 0));
+
+  let html = "";
+  if (devices.length) html += renderDevicesBlock(devices);
+  for (const gid of groupIds) {
+    const members = services.filter(k => currentParams[k].group === gid);
+    if (members.length) html += renderGroupBlock(gid, members);
+  }
+  const ungrouped = services.filter(k => !currentParams[k].group || !currentGroups[currentParams[k].group]);
+  if (ungrouped.length) {
+    const title = (devices.length || services.length > ungrouped.length)
+      ? `<div class="group-header"><div class="info"><div class="group-title">${esc(t("section_other"))}</div></div></div>`
+      : "";
+    html += `<div class="group-block">${title}${ungrouped.map(k => renderCard(k, currentParams[k])).join("")}</div>`;
+  }
+  el.innerHTML = html;
+
+  // indeterminate is a JS-only property, set after innerHTML
+  document.querySelectorAll("[data-group-toggle]").forEach(cb => {
+    const gid = cb.dataset.groupToggle;
+    const members = Object.keys(currentParams).filter(k => !isDevice(currentParams[k]) && currentParams[k].group === gid);
+    const blocked = members.filter(k => currentParams[k].enabled).length;
+    cb.indeterminate = blocked > 0 && blocked < members.length;
+  });
   updateCountdowns();
 }
 
@@ -997,41 +1297,103 @@ function confirmTimePicker() {
 
 function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
+async function apiPost(url, body) {
+  const res = await fetch(url, {method: "POST", headers: headers(), body: JSON.stringify(body)});
+  if (res.ok) applyState(await res.json());
+  return res.ok;
+}
+
 async function toggle(name, enabled) {
-  const res = await fetch("/api/state", {method: "POST", headers: headers(), body: JSON.stringify({name, enabled})});
-  if (res.ok) { const data = await res.json(); currentParams = data.params || {}; render(currentParams); }
+  await apiPost("/api/state", {name, enabled});
+}
+
+// Card toggle semantics: checked = restrictions active, for both kinds.
+// Devices are inverted on the API side (enabled = unrestricted).
+async function toggleCard(name, blocked) {
+  const p = currentParams[name];
+  const enabled = p && isDevice(p) ? !blocked : blocked;
+  await toggle(name, enabled);
+}
+
+async function toggleGroup(name, enabled) {
+  await apiPost("/api/group", {name, enabled});
 }
 
 async function setTimer(name, minutes) {
-  const res = await fetch("/api/timer", {method: "POST", headers: headers(), body: JSON.stringify({name, minutes})});
-  if (res.ok) { const data = await res.json(); currentParams = data.params || {}; render(currentParams); }
+  await apiPost("/api/timer", {name, minutes});
+}
+
+async function groupTimer(group, minutes) {
+  await apiPost("/api/timer", {group, minutes});
+}
+
+async function pauseAll(minutes) {
+  await apiPost("/api/pause", {minutes});
+}
+
+async function resumeAll() {
+  await apiPost("/api/resume", {});
+}
+
+async function applyPreset(name) {
+  await apiPost("/api/preset", {name});
 }
 
 async function cancelTimer(name) {
   const p = currentParams[name];
-  const restoreEnabled = p && p.inverted ? false : true;
-  const res = await fetch("/api/state", {method: "POST", headers: headers(), body: JSON.stringify({name, enabled: restoreEnabled})});
-  if (res.ok) { const data = await res.json(); currentParams = data.params || {}; render(currentParams); }
+  let restoreEnabled;
+  if (p && p.revert_enabled != null) restoreEnabled = p.revert_enabled;
+  else restoreEnabled = p && isDevice(p) ? false : true;
+  await apiPost("/api/state", {name, enabled: restoreEnabled});
 }
+
+function selectKind(kind) {
+  newParamKind = kind;
+  document.querySelectorAll("#new-kind button").forEach(b => {
+    b.classList.toggle("active", b.dataset.kind === kind);
+  });
+  document.getElementById("new-group").style.display = kind === "device" ? "none" : "";
+}
+
+function populateGroupSelect() {
+  const sel = document.getElementById("new-group");
+  const prev = sel.value;
+  const ids = Object.keys(currentGroups).sort((a, b) => (currentGroups[a].order || 0) - (currentGroups[b].order || 0));
+  sel.innerHTML = `<option value="">${esc(t("group_none"))}</option>` +
+    ids.map(id => `<option value="${esc(id)}">${esc(groupTitle(id))}</option>`).join("") +
+    `<option value="__new">${esc(t("group_new"))}</option>`;
+  if (prev && (currentGroups[prev] || prev === "")) sel.value = prev;
+}
+
+document.getElementById("new-group").addEventListener("change", async function() {
+  if (this.value !== "__new") return;
+  this.value = "";
+  const id = (prompt(t("group_new_id")) || "").trim().toLowerCase();
+  if (!id || id === "__new") return;
+  const title = (prompt(t("group_new_title")) || "").trim();
+  const res = await fetch("/api/groups", {method: "POST", headers: headers(), body: JSON.stringify({id, title})});
+  if (res.ok) {
+    applyState(await res.json());
+    this.value = id;
+  }
+});
 
 async function addParam() {
   const name = document.getElementById("new-name").value.trim();
   const description = document.getElementById("new-desc").value.trim();
-  const inverted = document.getElementById("new-inverted").checked;
+  const group = newParamKind === "device" ? "" : document.getElementById("new-group").value;
   if (!name) return;
-  const res = await fetch("/api/params", {method: "POST", headers: headers(), body: JSON.stringify({name, description, inverted})});
-  if (res.ok) {
-    const data = await res.json(); currentParams = data.params || {}; render(currentParams);
+  const ok = await apiPost("/api/params", {name, description, kind: newParamKind, group});
+  if (ok) {
     document.getElementById("new-name").value = "";
     document.getElementById("new-desc").value = "";
-    document.getElementById("new-inverted").checked = false;
   }
 }
 
 async function deleteParam(name) {
   if (!confirm(t("delete_confirm", name))) return;
   const res = await fetch("/api/params?name=" + encodeURIComponent(name), {method: "DELETE", headers: headers()});
-  if (res.ok) { const data = await res.json(); currentParams = data.params || {}; render(currentParams); }
+  if (res.ok) applyState(await res.json());
 }
 
 function updateCountdowns() {

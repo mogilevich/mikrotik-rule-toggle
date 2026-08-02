@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MikroTik Rule Toggle — remote control panel for MikroTik firewall rules and kid-control. Go web server (API + PWA UI) with toggles, timers, audit log. RouterOS 7 script syncs state by comment/name tags (`hook:<name>`).
+MikroTik Rule Toggle — remote control panel for MikroTik firewall rules and kid-control. Go web server (API + PWA UI) with toggles, timers, groups, presets, audit log. RouterOS 7 script syncs state by comment/name tags (`hook:<name>`).
+
+Params have a `kind`: `device` (kid-control, inverted logic) or `service` (firewall/DNS block). Services can belong to a `group` (games/video/social + custom); groups get a master toggle and group timers in the UI. Presets apply batch actions (block groups / release with timer). All grouping is server-side only — the router receives a flat params-only JSON.
 
 ## Build & Run
 
@@ -29,12 +31,17 @@ make restart
 
 # Test API
 curl -H "Authorization: Bearer test" http://localhost:8080/api/state
+
+# Tests
+go test ./server/
 ```
 
 ## Architecture
 
-- `server/main.go` — HTTP server, routing, auth middleware, heartbeat, script version check, graceful shutdown (SIGINT/SIGTERM)
-- `server/state.go` — `Store` struct with RWMutex-protected JSON file read/write, timer logic, pending timers
+- `server/main.go` — HTTP server setup, routing (Go 1.22 method patterns), heartbeat, script version check, graceful shutdown (SIGINT/SIGTERM)
+- `server/handlers.go` — all HTTP handlers + auth middleware; router (by User-Agent) gets params-only `/api/state` response so the .rsc substring parser never sees groups/presets keys
+- `server/state.go` — `Store` (RWMutex + JSON file): params with kind/group, groups, presets, timers with `revert_enabled`, group fan-out ops, `PauseDevices`/`ResumeDevices`, `ApplyPreset`, v1→v2 migration (`migrate()`)
+- `server/state_test.go` — migration, group toggle/timer, timer revert direction, pause/resume, presets
 - `server/audit.go` — `AuditLog` with buffered writes (5s flush), RWMutex, graceful Flush(), daily analytics
 - `server/static/index.html` — single-page vanilla JS PWA, pull-to-refresh, countdown timers, bar charts
 - `server/static/manifest.json` + `sw.js` — PWA support
@@ -70,8 +77,10 @@ Single `main` package, no internal packages. Static files embedded via `//go:emb
 - State stored as JSON file (`data/state.json`), audit log in `data/audit.json` (max 2000 entries, buffered 5s)
 - Auth: optional Bearer token via `AUTH_TOKEN` env; applies only to `/api/*` routes
 - UI stores token in localStorage
-- Timer: `TempRelease` creates pending timer (`timer_duration`); countdown starts only after router fetches state (`disabled_until`). Active timers can be extended.
-- Inverted params (kid-control): `enabled=true` in API → `disabled=yes` on MikroTik
+- Timer: `TempRelease` creates pending timer (`timer_duration`); countdown starts only after router fetches state (`disabled_until`). Active timers can be extended. `revert_enabled` stores the state to restore on expiry — timers work in both directions (release AND restrict, e.g. device pause)
+- Device params (kid-control, `kind: device`): `enabled=true` in API → `disabled=yes` on MikroTik (enabled = unrestricted). UI toggles show "checked = restrictions active" for both kinds (`toggleCard` inverts for devices)
+- Groups/presets live in `state.json`; seeded on first run (games/video/social, homework/free-hour). Group titles/preset titles empty by default — UI translates well-known ids via i18n, custom ones store explicit `title`
+- Legacy params (`inverted` without `kind`) are migrated on load; `inverted` is kept in sync for rollback compatibility
 - Docker image built by GitHub Actions, pushed to `ghcr.io/mogilevich/mikrotik-rule-toggle`
 - `docker compose` uses pre-built image; `make build-local` for local builds
 - Graceful shutdown: SIGINT/SIGTERM → flush audit → stop server
