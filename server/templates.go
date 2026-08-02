@@ -140,6 +140,18 @@ func renderTemplatesRsc(templates []ServiceTemplate) string {
 
 # Drop rules go right before the established/related accept (if present)
 :local est [/ip/firewall/filter find where chain=forward connection-state~"established"]
+
+# --- QUIC block for kids (always on) ---
+# tls-host (SNI) matching works on TCP TLS only; QUIC hides the hello in
+# UDP/443. Dropping QUIC for kids forces browsers to fall back to TCP+TLS
+# where the SNI rules below can see the hostname.
+:if ([:len [/ip/firewall/filter find where comment="tpl:quic-block"]] = 0) do={
+    :if ([:len $est] > 0) do={
+        /ip/firewall/filter add chain=forward src-address-list=kids-devices protocol=udp dst-port=443 action=drop comment="tpl:quic-block" place-before=($est->0)
+    } else={
+        /ip/firewall/filter add chain=forward src-address-list=kids-devices protocol=udp dst-port=443 action=drop comment="tpl:quic-block"
+    }
+}
 `)
 	for _, t := range templates {
 		list := "blocked-" + t.ID
@@ -163,14 +175,30 @@ func renderTemplatesRsc(templates []ServiceTemplate) string {
 			":do { /ip/dns/static remove [find where comment=\"hook:%s\"] } on-error={}\n", t.ID)
 		fmt.Fprintf(&b,
 			":do { /ip/firewall/filter set [find where comment=\"hook:%s\" && !src-address-list] src-address-list=kids-devices } on-error={}\n", t.ID)
-		fmt.Fprintf(&b, `:if ([:len [/ip/firewall/filter find where comment="hook:%s"]] = 0) do={
+		// Main drop rule over the harvested address-list (guard is specific:
+		// SNI rules below share the hook comment)
+		fmt.Fprintf(&b, `:if ([:len [/ip/firewall/filter find where comment="hook:%s" && dst-address-list="%s"]] = 0) do={
     :if ([:len $est] > 0) do={
         /ip/firewall/filter add chain=forward src-address-list=kids-devices dst-address-list=%s action=drop comment="hook:%s" disabled=yes place-before=($est->0)
     } else={
         /ip/firewall/filter add chain=forward src-address-list=kids-devices dst-address-list=%s action=drop comment="hook:%s" disabled=yes
     }
 }
-`, t.ID, list, t.ID, list, t.ID)
+`, t.ID, list, list, t.ID, list, t.ID)
+		// SNI (tls-host) drop rules: one per domain, hostname-level match on
+		// the TCP TLS hello — covers IPs the lists never saw. Same hook tag,
+		// so they toggle together with the main rule. "*<domain>" matches
+		// the apex and every subdomain.
+		for _, d := range t.Domains {
+			fmt.Fprintf(&b, `:if ([:len [/ip/firewall/filter find where comment="hook:%s" && tls-host="*%s"]] = 0) do={
+    :if ([:len $est] > 0) do={
+        /ip/firewall/filter add chain=forward src-address-list=kids-devices protocol=tcp dst-port=443 tls-host=*%s action=drop comment="hook:%s" disabled=yes place-before=($est->0)
+    } else={
+        /ip/firewall/filter add chain=forward src-address-list=kids-devices protocol=tcp dst-port=443 tls-host=*%s action=drop comment="hook:%s" disabled=yes
+    }
+}
+`, t.ID, d, d, t.ID, d, t.ID)
+		}
 	}
 	b.WriteString("\n:log info \"rule-toggle templates imported\"\n")
 	return b.String()

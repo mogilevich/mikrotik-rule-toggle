@@ -218,6 +218,9 @@ func TestRenderTemplatesRsc(t *testing.T) {
 		`!src-address-list] src-address-list=kids-devices`,
 		`/ip/dns/static add type=FWD name=roblox.com match-subdomain=yes forward-to=$dnsUp address-list=blocked-roblox comment="tpl:roblox"`,
 		`:local dnsUp`,
+		`comment="hook:roblox" && dst-address-list="blocked-roblox"`,
+		`protocol=tcp dst-port=443 tls-host=*roblox.com action=drop comment="hook:roblox" disabled=yes`,
+		`src-address-list=kids-devices protocol=udp dst-port=443 action=drop comment="tpl:quic-block"`,
 	} {
 		if !strings.Contains(rsc, want) {
 			t.Errorf("rsc missing %q", want)
