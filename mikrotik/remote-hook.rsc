@@ -26,7 +26,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "21"
+:local scriptVersion "22"
 
 # Set by applyRule when a /ip/dns/static entry actually changes state.
 # Used after the main scan to flush DNS cache at most once per cycle.
@@ -37,16 +37,23 @@
 # --- Fetch state from server (in memory, no disk writes) ---
 # X-Seen-Params reports hook tags found during the PREVIOUS run (one cycle
 # behind) — the server uses it to warn about params with no rule on router.
+# NB: no && with possibly-unset globals — RouterOS does not short-circuit,
+# nested :if only (same as the remoteHookLock check below).
 :local content ""
-:local hdr "X-Script-Version: $scriptVersion"
-:if ($token != "") do={ :set hdr ("Authorization: Bearer $token," . $hdr) }
+:local seenHdr ""
 :global remoteHookSeen
-:if ([:typeof $remoteHookSeen] = "str" && [:len $remoteHookSeen] > 0) do={
-    :set hdr ($hdr . ",X-Seen-Params: " . $remoteHookSeen)
+:if ([:typeof $remoteHookSeen] = "str") do={
+    :if ([:len $remoteHookSeen] > 0) do={
+        :set seenHdr ",X-Seen-Params: $remoteHookSeen"
+    }
 }
 
 :do {
-    :set content ([/tool/fetch url=$url http-header-field=$hdr output=user as-value duration=10]->"data")
+    :if ($token != "") do={
+        :set content ([/tool/fetch url=$url http-header-field="Authorization: Bearer $token,X-Script-Version: $scriptVersion$seenHdr" output=user as-value duration=10]->"data")
+    } else={
+        :set content ([/tool/fetch url=$url http-header-field="X-Script-Version: $scriptVersion$seenHdr" output=user as-value duration=10]->"data")
+    }
 } on-error={
     :log warning "remote-hook: failed to fetch state from $url"
     :error "fetch failed"
@@ -503,12 +510,20 @@
         } on-error={
             :log warning "remote-hook: failed to download updated script"
         }
-        :if ([:len $newScript] > 0) do={
+        # Apply only a complete download: a truncated script would replace
+        # this one with unparseable source and kill the whole sync loop.
+        # Marker is concatenated so this line does not match itself.
+        :local eofMarker ("# remote-hook " . "EOF")
+        :if ([:typeof [:find $newScript $eofMarker]] = "num") do={
             :do {
                 /system/script set $scriptName source=$newScript
                 :log info "remote-hook: script updated successfully"
             } on-error={
                 :log warning "remote-hook: failed to update script source"
+            }
+        } else={
+            :if ([:len $newScript] > 0) do={
+                :log warning "remote-hook: downloaded script has no EOF marker (truncated?), not applying"
             }
         }
     }
@@ -518,3 +533,5 @@
 
     :log info "remote-hook: sync completed"
 }
+
+# remote-hook EOF
