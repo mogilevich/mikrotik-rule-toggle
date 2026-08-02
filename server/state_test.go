@@ -216,13 +216,21 @@ func TestRenderTemplatesRsc(t *testing.T) {
 		`src-address-list=kids-devices dst-address-list=blocked-roblox action=drop comment="hook:roblox" disabled=yes`,
 		`/ip/dns/static remove [find where comment="hook:roblox"]`,
 		`!src-address-list] src-address-list=kids-devices`,
+		`/ip/dns/static add type=FWD name=roblox.com match-subdomain=yes forward-to=$dnsUp address-list=blocked-roblox comment="tpl:roblox"`,
+		`:local dnsUp`,
 	} {
 		if !strings.Contains(rsc, want) {
 			t.Errorf("rsc missing %q", want)
 		}
 	}
-	if strings.Contains(rsc, "/ip/dns/static add") {
-		t.Error("templates must not create LAN-wide dns/static entries")
+	if strings.Contains(rsc, "NXDOMAIN") {
+		t.Error("templates must not create LAN-wide NXDOMAIN entries")
+	}
+	// harvesters must never carry the hook: tag — the toggle cycle would disable them
+	for _, line := range strings.Split(rsc, "\n") {
+		if strings.Contains(line, "/ip/dns/static add") && strings.Contains(line, "hook:") {
+			t.Errorf("dns harvester tagged hook:, must be tpl: only: %s", line)
+		}
 	}
 	if strings.Contains(rsc, "hook:youtube") {
 		t.Error("filtered rsc must not contain other templates")
