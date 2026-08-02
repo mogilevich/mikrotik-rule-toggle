@@ -240,6 +240,57 @@ func handleDeleteParam(w http.ResponseWriter, r *http.Request, store *Store, aud
 	writeState(w, store)
 }
 
+// handleGetTemplates returns the catalog with per-item imported status.
+func handleGetTemplates(w http.ResponseWriter, r *http.Request, store *Store) {
+	params := store.GetState().Params
+	type tplInfo struct {
+		ServiceTemplate
+		Imported bool `json:"imported"`
+	}
+	out := make([]tplInfo, 0, len(templateCatalog))
+	for _, t := range templateCatalog {
+		_, imported := params[t.ID]
+		out = append(out, tplInfo{t, imported})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+type importTemplatesReq struct {
+	IDs []string `json:"ids"` // empty = all
+}
+
+// handleImportTemplates creates params for the selected templates.
+// Existing params keep their state (AddParam re-classifies).
+func handleImportTemplates(w http.ResponseWriter, r *http.Request, store *Store, audit *AuditLog) {
+	var req importTemplatesReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	templates := selectTemplates(req.IDs)
+	if len(templates) == 0 {
+		http.Error(w, "no matching templates", http.StatusNotFound)
+		return
+	}
+	for _, t := range templates {
+		store.AddParam(t.ID, t.Title, KindService, t.Group)
+	}
+	audit.Add("шаблоны", "import", fmt.Sprintf("импортировано %d сервисов", len(templates)))
+	writeState(w, store)
+}
+
+// handleTemplatesRsc serves the RouterOS import script (?ids=a,b,c to filter).
+func handleTemplatesRsc(w http.ResponseWriter, r *http.Request) {
+	var ids []string
+	if q := r.URL.Query().Get("ids"); q != "" {
+		ids = strings.Split(q, ",")
+	}
+	templates := selectTemplates(ids)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	fmt.Fprint(w, renderTemplatesRsc(templates))
+}
+
 type addGroupReq struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`

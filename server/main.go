@@ -125,6 +125,14 @@ func main() {
 		handleDeleteGroup(w, r, store)
 	})
 
+	mux.HandleFunc("GET /api/templates", func(w http.ResponseWriter, r *http.Request) {
+		handleGetTemplates(w, r, store)
+	})
+	mux.HandleFunc("POST /api/templates/import", func(w http.ResponseWriter, r *http.Request) {
+		handleImportTemplates(w, r, store, audit)
+	})
+	mux.HandleFunc("GET /mikrotik/templates.rsc", handleTemplatesRsc)
+
 	mux.HandleFunc("GET /api/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(hb.Info())

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -184,6 +185,65 @@ func TestAddParamPreservesStateOnReclassify(t *testing.T) {
 	}
 	if p.Enabled || p.TimerDuration == nil {
 		t.Errorf("reclassify must preserve enabled state and timers, got %+v", p)
+	}
+}
+
+func TestTemplateCatalogSane(t *testing.T) {
+	validGroups := map[string]bool{"games": true, "video": true, "social": true}
+	seen := map[string]bool{}
+	for _, tpl := range templateCatalog {
+		if tpl.ID == "" || strings.ContainsAny(tpl.ID, " \"") {
+			t.Errorf("bad template id %q", tpl.ID)
+		}
+		if seen[tpl.ID] {
+			t.Errorf("duplicate template id %q", tpl.ID)
+		}
+		seen[tpl.ID] = true
+		if !validGroups[tpl.Group] {
+			t.Errorf("%s: unknown group %q", tpl.ID, tpl.Group)
+		}
+		if len(tpl.Domains) == 0 {
+			t.Errorf("%s: no domains", tpl.ID)
+		}
+	}
+}
+
+func TestRenderTemplatesRsc(t *testing.T) {
+	rsc := renderTemplatesRsc(selectTemplates([]string{"roblox"}))
+	for _, want := range []string{
+		`list=blocked-roblox address=roblox.com`,
+		`/ip/dns/static add name=roblox.com type=NXDOMAIN match-subdomain=yes comment="hook:roblox" disabled=yes`,
+		`address=128.116.0.0/17`,
+		`dst-address-list=blocked-roblox action=drop comment="hook:roblox" disabled=yes`,
+	} {
+		if !strings.Contains(rsc, want) {
+			t.Errorf("rsc missing %q", want)
+		}
+	}
+	if strings.Contains(rsc, "hook:youtube") {
+		t.Error("filtered rsc must not contain other templates")
+	}
+	// every add is guarded for idempotency: top-level adds are inline behind
+	// an :if guard, block-level adds are indented inside an :if block
+	for _, line := range strings.Split(rsc, "\n") {
+		if strings.HasPrefix(line, "/ip/") && strings.Contains(line, " add ") {
+			t.Errorf("unguarded add: %s", line)
+		}
+	}
+}
+
+func TestImportTemplatesPreservesState(t *testing.T) {
+	s := newTestStore(t)
+	s.AddParam("roblox", "старое описание", KindService, "")
+	s.SetParam("roblox", true)
+	tpl := templateByID("roblox")
+	s.AddParam(tpl.ID, tpl.Title, KindService, tpl.Group)
+	p := s.GetState().Params["roblox"]
+	if !p.Enabled {
+		t.Error("import must not reset enabled state")
+	}
+	if p.Group != "games" || p.Description != "Roblox" {
+		t.Errorf("import must set group/title, got %+v", p)
 	}
 }
 

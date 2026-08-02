@@ -42,6 +42,7 @@ go test ./server/
 - `server/handlers.go` — all HTTP handlers + auth middleware; router (by User-Agent) gets params-only `/api/state` response so the .rsc substring parser never sees groups/presets keys
 - `server/state.go` — `Store` (RWMutex + JSON file): params with kind/group, groups, presets, timers with `revert_enabled`, group fan-out ops, `PauseDevices`/`ResumeDevices`, `ApplyPreset`, v1→v2 migration (`migrate()`)
 - `server/state_test.go` — migration, group toggle/timer, timer revert direction, pause/resume, presets
+- `server/templates.go` — service blocking template catalog (domains + CIDR ranges per service, grouped) + idempotent RouterOS import script generator (`/mikrotik/templates.rsc`); app-side import goes through `AddParam` (state-preserving)
 - `server/audit.go` — `AuditLog` with buffered writes (5s flush), RWMutex, graceful Flush(), daily analytics
 - `server/static/index.html` — single-page vanilla JS PWA, pull-to-refresh, countdown timers, bar charts
 - `server/static/manifest.json` + `sw.js` — PWA support

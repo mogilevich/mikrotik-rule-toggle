@@ -604,6 +604,83 @@
     box-shadow: 0 1px 3px rgba(0,0,0,.1);
   }
 
+  /* Templates */
+  .tpl-group-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: .3px;
+    margin: 14px 0 6px;
+  }
+  .tpl-group-title:first-child { margin-top: 0; }
+  .tpl-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--sep);
+  }
+  .tpl-row:last-child { border-bottom: none; }
+  .tpl-row .info { flex: 1; min-width: 0; }
+  .tpl-row .tpl-name { font-size: 15px; font-weight: 600; color: var(--text1); }
+  .tpl-row .tpl-domains {
+    font-size: 12px;
+    color: var(--text3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: ui-monospace, monospace;
+  }
+  .tpl-row button {
+    background: rgba(0,122,255,.1);
+    color: var(--blue);
+    border: none;
+    padding: 0 14px;
+    height: 30px;
+    border-radius: 15px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-family: -apple-system, sans-serif;
+  }
+  .tpl-row button:active { opacity: .6; }
+  .tpl-row .tpl-done {
+    color: var(--green);
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .tpl-import-all {
+    background: var(--blue);
+    color: #fff;
+    border: none;
+    padding: 12px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 600;
+    width: 100%;
+    margin-top: 12px;
+    font-family: -apple-system, sans-serif;
+  }
+  .tpl-import-all:active { opacity: .8; }
+  .tpl-router-hint { font-size: 13px; color: var(--text2); margin: 14px 0 6px; }
+  .tpl-router-cmd {
+    background: rgba(60,60,67,.06);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--text1);
+    overflow-x: auto;
+    white-space: pre;
+    -webkit-user-select: all;
+    user-select: all;
+  }
+
   /* Time picker modal */
   .modal-overlay {
     position: fixed;
@@ -724,6 +801,16 @@
     </div>
   </details>
 
+  <details class="section" id="templates-section">
+    <summary>Templates</summary>
+    <div class="section-body">
+      <div id="templates-list"></div>
+      <button class="tpl-import-all" id="tpl-import-all" onclick="importTemplates([])"></button>
+      <div class="tpl-router-hint" id="tpl-router-hint"></div>
+      <pre class="tpl-router-cmd" id="tpl-router-cmd"></pre>
+    </div>
+  </details>
+
   <details class="section">
     <summary>Add parameter</summary>
     <div class="section-body add-form">
@@ -786,6 +873,12 @@ const T = {
     group_new_id: "Group id (latin, e.g. games):",
     group_new_title: "Group title:",
     btn_add: "Add",
+    section_templates: "Templates",
+    tpl_import_all: "Import all to the app",
+    tpl_add: "Add",
+    tpl_imported: "✓ added",
+    tpl_router_hint: "Firewall rules on the router (DNS + address-lists + drop rules, created disabled) — run once:",
+    tpl_more_domains: "+{0} more",
     section_devices: "Devices",
     section_other: "Other",
     group_games: "Games",
@@ -870,6 +963,12 @@ const T = {
     group_new_id: "ID группы (латиницей, напр. games):",
     group_new_title: "Название группы:",
     btn_add: "Добавить",
+    section_templates: "Шаблоны",
+    tpl_import_all: "Импортировать всё в приложение",
+    tpl_add: "Добавить",
+    tpl_imported: "✓ добавлен",
+    tpl_router_hint: "Правила в фаервол роутера (DNS + address-list-ы + drop-правила, создаются выключенными) — выполнить один раз:",
+    tpl_more_domains: "+{0} ещё",
     section_devices: "Устройства",
     section_other: "Прочее",
     group_games: "Игры",
@@ -958,9 +1057,14 @@ function applyStaticI18n() {
   document.querySelector("#log-section > summary").textContent = t("section_history");
   document.querySelector("#stats-section > summary").textContent = t("section_stats");
   const sections = document.querySelectorAll(".section > summary");
-  // sections: history, stats, add, token (order matches DOM)
-  if (sections[2]) sections[2].textContent = t("section_add");
-  if (sections[3]) sections[3].textContent = t("section_token");
+  // sections: history, stats, templates, add, token (order matches DOM)
+  if (sections[2]) sections[2].textContent = t("section_templates");
+  if (sections[3]) sections[3].textContent = t("section_add");
+  if (sections[4]) sections[4].textContent = t("section_token");
+  document.getElementById("tpl-import-all").textContent = t("tpl_import_all");
+  document.getElementById("tpl-router-hint").textContent = t("tpl_router_hint");
+  document.getElementById("tpl-router-cmd").textContent =
+    '/tool/fetch url="' + location.origin + '/mikrotik/templates.rsc" dst-path=templates.rsc\n/import file-name=templates.rsc';
   const tabs = document.querySelectorAll("#stats-tabs button");
   if (tabs[0]) tabs[0].textContent = t("days_1");
   if (tabs[1]) tabs[1].textContent = t("days_7");
@@ -1539,6 +1643,46 @@ function formatDateShort(dateStr) {
   return String(d.getDate()).padStart(2,"0") + "." + String(d.getMonth()+1).padStart(2,"0");
 }
 
+async function loadTemplates() {
+  try {
+    const res = await fetch("/api/templates", {headers: headers()});
+    if (!res.ok) return;
+    const templates = await res.json();
+    const el = document.getElementById("templates-list");
+    const groupOrder = [];
+    const byGroup = {};
+    templates.forEach(tp => {
+      if (!byGroup[tp.group]) { byGroup[tp.group] = []; groupOrder.push(tp.group); }
+      byGroup[tp.group].push(tp);
+    });
+    el.innerHTML = groupOrder.map(gid =>
+      `<div class="tpl-group-title">${esc(groupTitle(gid))}</div>` +
+      byGroup[gid].map(tp => {
+        const shown = tp.domains.slice(0, 3).join(", ");
+        const more = tp.domains.length > 3 ? " " + t("tpl_more_domains", tp.domains.length - 3) : "";
+        const action = tp.imported
+          ? `<span class="tpl-done">${esc(t("tpl_imported"))}</span>`
+          : `<button onclick="importTemplates(['${esc(tp.id)}'])">${esc(t("tpl_add"))}</button>`;
+        return `<div class="tpl-row">
+          <div class="info">
+            <div class="tpl-name">${esc(tp.title)}</div>
+            <div class="tpl-domains">${esc(shown)}${esc(more)}</div>
+          </div>
+          ${action}
+        </div>`;
+      }).join("")
+    ).join("");
+  } catch(e) {}
+}
+
+async function importTemplates(ids) {
+  const ok = await apiPost("/api/templates/import", {ids});
+  if (ok) loadTemplates();
+}
+
+document.getElementById("templates-section").addEventListener("toggle", function() {
+  if (this.open) loadTemplates();
+});
 document.getElementById("log-section").addEventListener("toggle", function() {
   if (this.open) loadLog();
 });
