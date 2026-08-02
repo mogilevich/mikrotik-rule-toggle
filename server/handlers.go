@@ -37,9 +37,10 @@ func handleGetState(w http.ResponseWriter, r *http.Request, store *Store, hb *He
 		writeState(w, store)
 		return
 	}
+	// ";"-separated: commas are header separators in RouterOS http-header-field
 	var seen []string
 	if h := r.Header.Get("X-Seen-Params"); h != "" {
-		seen = strings.Split(h, ",")
+		seen = strings.Split(h, ";")
 	}
 	hb.Touch(r.Header.Get("X-Script-Version"), seen)
 	store.ActivatePendingTimers()

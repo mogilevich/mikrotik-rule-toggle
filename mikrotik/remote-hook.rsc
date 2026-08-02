@@ -26,7 +26,7 @@
 # --- Configuration (edit these) ---
 :local url "http://your-server:8080/api/state"
 :local token ""
-:local scriptVersion "22"
+:local scriptVersion "23"
 
 # Set by applyRule when a /ip/dns/static entry actually changes state.
 # Used after the main scan to flush DNS cache at most once per cycle.
@@ -37,14 +37,21 @@
 # --- Fetch state from server (in memory, no disk writes) ---
 # X-Seen-Params reports hook tags found during the PREVIOUS run (one cycle
 # behind) — the server uses it to warn about params with no rule on router.
-# NB: no && with possibly-unset globals — RouterOS does not short-circuit,
-# nested :if only (same as the remoteHookLock check below).
+# CRITICAL: comma is the HEADER SEPARATOR in http-header-field, so the
+# value must never contain one — tags are joined with ";" (a comma-joined
+# value bricked every fetch in v21/v22). Guards: type, sane length, no
+# commas (legacy value from v21/v22). No && with possibly-unset globals —
+# RouterOS does not short-circuit; nested :if only.
 :local content ""
 :local seenHdr ""
 :global remoteHookSeen
 :if ([:typeof $remoteHookSeen] = "str") do={
     :if ([:len $remoteHookSeen] > 0) do={
-        :set seenHdr ",X-Seen-Params: $remoteHookSeen"
+        :if ([:len $remoteHookSeen] < 400) do={
+            :if ([:typeof [:find $remoteHookSeen ","]] != "num") do={
+                :set seenHdr ",X-Seen-Params: $remoteHookSeen"
+            }
+        }
     }
 }
 
@@ -453,10 +460,11 @@
     }
 
     # --- Publish rule inventory for the next run's X-Seen-Params header ---
+    # ";"-joined: a comma would split the header value into bogus headers
     :local seenJoined ""
     :foreach s in=$remoteHookSeenNew do={
         :if ([:len $s] > 0) do={
-            :if ([:len $seenJoined] > 0) do={ :set seenJoined ($seenJoined . ",") }
+            :if ([:len $seenJoined] > 0) do={ :set seenJoined ($seenJoined . ";") }
             :set seenJoined ($seenJoined . $s)
         }
     }

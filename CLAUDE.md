@@ -72,7 +72,8 @@ Single `main` package, no internal packages. Static files embedded via `//go:emb
 - Fetch: `output=user as-value` (in-memory, no disk writes), `duration=10` (10s timeout)
 - Fail-safe: any fetch/parse error → script aborts, no rules changed
 - `scriptVersion` variable — increment on every .rsc change (server compares with router's `X-Script-Version` header)
-- NEVER use `&&`/`||` with possibly-unset globals — RouterOS does not short-circuit, both operands evaluate and a `nothing` operand aborts the whole run (this bricked the sync loop in v21). Nested `:if` only, like the `remoteHookLock` check
+- `http-header-field` treats COMMA as the header separator — a header value must never contain one. A comma-joined X-Seen-Params value bricked every fetch in v21/v22 (first run after install worked, every later run failed instantly with no packets sent; recovery = `/system/script/environment remove remoteHookSeen` + reinstall). Tags are ";"-joined; the script drops the global if it contains a comma or is >400 chars
+- Avoid `&&`/`||` with possibly-unset globals — RouterOS does not short-circuit; nested `:if` only, like the `remoteHookLock` check
 - Auto-update applies a downloaded script only if it contains the `# remote-hook EOF` end marker (truncation guard); keep that comment as the literal last line
 - Template auto-import: server sends `templates_hash` (fingerprint of templates.rsc rendered for app-imported services) in the router response; script keeps the last applied hash in a global and on mismatch fetches `/mikrotik/templates.rsc?imported=1` + `/import`s it (idempotent). Global is wiped on reboot → one harmless re-import
 - Rule inventory: script collects all `hook:` tags found during the scan and reports them NEXT cycle via `X-Seen-Params` header; server exposes them in `/api/heartbeat` (`seen_params`), UI flags params missing on the router
