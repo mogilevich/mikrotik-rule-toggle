@@ -406,6 +406,8 @@ func (s *Store) RestoreExpired() []string {
 	return restored
 }
 
+// AddParam creates a param, or re-classifies an existing one (description/
+// kind/group) preserving its enabled state and timers.
 func (s *Store) AddParam(name, description, kind, group string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -415,7 +417,10 @@ func (s *Store) AddParam(name, description, kind, group string) {
 	if kind == KindDevice {
 		group = "" // groups apply to services only
 	}
-	p := Param{Enabled: false, Description: description, Kind: kind, Group: group}
+	p := s.data.Params[name] // zero value (Enabled:false, no timers) if new
+	p.Description = description
+	p.Kind = kind
+	p.Group = group
 	p.Inverted = p.inverted()
 	s.data.Params[name] = p
 	s.save()

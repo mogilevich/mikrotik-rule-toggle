@@ -171,6 +171,22 @@ func TestApplyPreset(t *testing.T) {
 	}
 }
 
+func TestAddParamPreservesStateOnReclassify(t *testing.T) {
+	s := newTestStore(t)
+	s.AddParam("roblox", "Roblox", KindService, "")
+	s.SetParam("roblox", true)
+	s.TempRelease("roblox", 30*time.Minute)
+
+	s.AddParam("roblox", "Roblox game", KindService, "games")
+	p := s.GetState().Params["roblox"]
+	if p.Group != "games" || p.Description != "Roblox game" {
+		t.Errorf("reclassify must update group/description, got %+v", p)
+	}
+	if p.Enabled || p.TimerDuration == nil {
+		t.Errorf("reclassify must preserve enabled state and timers, got %+v", p)
+	}
+}
+
 func TestDeleteGroupOnlyWhenEmpty(t *testing.T) {
 	s := newTestStore(t)
 	s.AddParam("roblox", "", KindService, "games")
